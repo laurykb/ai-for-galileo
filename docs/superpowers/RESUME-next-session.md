@@ -1,5 +1,39 @@
 # Reprise — état du projet & tâches restantes (2026-07-22)
 
+> ## ⏸️ REPRISE 2026-07-23 — Vague 1 : code FAIT, mesures 30-q à confirmer
+>
+> **Fait aujourd'hui (2026-07-22, tout commité, branche `feat/chantier1-retrieval-multidoc`) :**
+> - ✅ **Correctif agrégat RAGAS** (commit `7edd7a9`) : `answer_relevancy`+`keyword_hit_rate` remontés à l'agrégat ; `run_eval` écrit `evals/last_eval.json`. Baseline backfillé : **aa-rel réel = 0.599**, kw_hit = 0.656 (recall 0.529 / prec 0.809 / faith 0.495).
+> - ✅ **Plan Vague 1** : `docs/superpowers/plans/2026-07-22-vague1-precompute.md`.
+> - ✅ **Code Vague 1 (TDD + review clean, suite 240 verte)** :
+>   - Task 1 `aeaab14` — flags `HYPE_ENABLED`/`HYPE_MAX_QUESTIONS`/`CONTEXT_HEADERS_ENABLED` (défaut off).
+>   - Task 2 `2ccf184` — `indexing/embedding.build_embedding_units` : vrai HyPE (1 vecteur/question → parent) + préfixe en-tête embed-only ; restaure le vecteur CONTENU (l'ancien code embarquait le blob questions à la place).
+>   - Task 3 `14afbc0` — `retrieval/hype.resolve_hype_hits` (collapse question→parent + dédup) câblé dans `hybrid_retrieve` (gate `HYPE_ENABLED`).
+>   - Task 6 `845f675` — fix divergence top-k parent-child (`core/ask._effective_topk` suit le vrai gate `PARENT_CHILD_ENABLED`).
+>   - Plomberie `18872ac` — `rebuild_vectors._Doc` préserve `questions` en liste (chemin rapide HyPE : re-embed depuis Mongo, ~30s vs full re-ingest).
+>
+> **Mesures directionnelles (⚠️ `--limit 8`, INDICATIVES — pas encore les 30-q) — mêmes 8 questions :**
+>
+> | Config | recall | prec | faith | aa-rel | kw_hit | lat |
+> |---|---|---|---|---|---|---|
+> | B1 (flags off, corrigé) | 0.163 | 0.615 | 0.246 | 0.557 | 0.167 | 38.0s |
+> | **HyPE** | **0.269** | 0.547 | 0.253 | 0.526 | 0.167 | **22.7s** |
+> | HyPE+headers | 0.175 | 0.619 | 0.324 | 0.553 | 0.167 | 13.0s |
+> | HyPE+parent-child | 0.170 | 0.710 | 0.341 | 0.497 | 0.208 | 23.8s |
+>
+> **Lecture :** HyPE = **↑recall +0.106 (sa cible n°1) + ↓latence** → signal positif fort. Headers & parent-child = ↑precision/faithfulness mais annulent le gain recall (arbitrage précision↔rappel à trancher). Ingestion HyPE **linéaire** (×3.7 vecteurs → ×3.3 temps ; zéro LLM en plus ; requête coût nul). Vigilance échelle → borner `HYPE_MAX_QUESTIONS` **élastiquement** (cf mémoire `rag-elasticity-principle`).
+>
+> **À FAIRE demain (dans l'ordre) :**
+> 1. **Redémarrer `serve.py`** (l'app en mémoire a l'ancien code retrieve, sans résolution HyPE).
+> 2. **Confirmer sur 30-q** (la décision d'adoption ne se prend PAS sur 8-q) : pour chaque flag, `HYPE_ENABLED=true .venv/bin/python scripts/rebuild_vectors.py` puis `PYTHONUTF8=1 HYPE_ENABLED=true RAGAS_JUDGE_CONCURRENCY=4 python -m evals.run_eval --mode ragas` (sans `--limit`, sans `--no-save`). Mesurer : B1 → HyPE → +headers → +parent-child → combo. Comparer à B1 (même code), pas à l'ancien baseline figé.
+> 3. **Décider** chaque technique sur gain net RAGAS ; figer les flags gagnants dans `.env` ; index reconstruit dans l'état adopté.
+> 4. **Task 8** : combo + sonde use case nord + **revue Opus finale** (merge-ready) du diff Vague 1.
+> 5. Puis **Vague 2** (spec à écrire) avec la même méthode.
+>
+> **État index CE SOIR :** restauré content-only (773 vecteurs), cohérent avec `.env` (tous flags Vague 1 = off). Aucune modif `.env` (mesures pilotées par env-var process). Ledger détaillé : `.superpowers/sdd/progress.md`.
+
+---
+
 Point de départ de la prochaine session. Branche : `feat/chantier1-retrieval-multidoc`.
 Ledger d'exécution : `.superpowers/sdd/progress.md`. Mémoire projet :
 `~/.claude/projects/-home-marsattacks/memory/chantier1-retrieval-multidoc.md`.
