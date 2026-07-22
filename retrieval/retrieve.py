@@ -8,6 +8,7 @@ from retrieval.keyword_bm25 import run_bm25_for_query
 from retrieval.rrf import fuse_with_rrf
 from retrieval.cross_encoder import rerank_cross_encoder
 from retrieval.parent_child import expand_to_parent
+from retrieval.hype import resolve_hype_hits
 from utils.debug_utils import print_simple_results
 from utils.logging_config import get_logger
 from utils.tracing import span
@@ -26,6 +27,7 @@ from env_config import (
     CANDIDATE_POOL_PER_DOC,
     PER_DOC_FLOOR,
     MAX_CHUNKS,
+    HYPE_ENABLED,
 )
 from retrieval.coverage import apply_coverage_floor, elastic_candidate_pool
 
@@ -128,6 +130,10 @@ def hybrid_retrieve(
     _t_retrieval = time.perf_counter()
     logger.debug("parallel search : %.0fms  (sem=%d bm25=%d)",
                  (_t_retrieval - _t_start) * 1000, len(sem_ids), len(bm_ids))
+
+    # Résolution HyPE : les hits sur des vecteurs-question remontent vers leur chunk parent
+    if HYPE_ENABLED:
+        sem_ids, sem_lookup = resolve_hype_hits(sem_ids, sem_lookup)
 
     # 1) Post-processing sémantique
     for i in sem_ids:
