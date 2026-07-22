@@ -215,6 +215,40 @@ def context_recall_ragas(reference: str, chunks: list, llm=None) -> float:
     return attrib / len(claims)
 
 
+def _judge_chunk_relevant(question: str, reference: str, doc: str, llm) -> bool:
+    """Le PASSAGE est-il pertinent pour répondre à la QUESTION (au vu de la RÉFÉRENCE) ?"""
+    prompt = f"""[TÂCHE] Ce PASSAGE est-il pertinent pour répondre à la QUESTION (au vu de la RÉPONSE attendue) ? 1.0 = pertinent, 0.0 = non.
+
+[QUESTION] {question}
+[RÉPONSE ATTENDUE] {reference[:500]}
+[PASSAGE] {doc[:800]}
+
+Score :"""
+    judge = llm
+    if callable(judge) and not hasattr(judge, "invoke"):
+        # _ask_judge attend un objet .invoke -> on enveloppe un llm callable injecté.
+        judge = types.SimpleNamespace(invoke=judge)
+    return _ask_judge(judge, prompt) >= 0.5
+
+
+def context_precision_ragas(question: str, reference: str, chunks: list, topk: int = 5, llm=None) -> float:
+    """Mean average precision@k : pertinence jugée par chunk, pondérée par le rang."""
+    kept = (chunks or [])[:topk]
+    if not kept:
+        return 0.0
+    if llm is None:
+        llm = _get_judge_llm()
+    hits = 0
+    precisions = []
+    for i, c in enumerate(kept, 1):
+        if _judge_chunk_relevant(question, reference, c.get("doc", "") or "", llm):
+            hits += 1
+            precisions.append(hits / i)
+    if not precisions:
+        return 0.0
+    return sum(precisions) / len(precisions)
+
+
 def faithfulness_llm(generated: str, chunks: list, llm=None) -> float:
     """Fidélité : la réponse est-elle entièrement fondée sur le contexte ? (0.0 = hallucination, 1.0 = fidèle)"""
     if not generated or not chunks:
