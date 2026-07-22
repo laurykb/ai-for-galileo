@@ -208,7 +208,9 @@ def main():
     parser.add_argument("--mode", choices=["retrieval", "full", "ragas"], default="retrieval",
                         help="retrieval = recherche seule (rapide) ; full = pipeline complet ; "
                              "ragas = pipeline complet + métriques RAGAS par affirmation.")
-    parser.add_argument("--no-judge", action="store_true", help="Désactive le LLM-as-judge (modes full/ragas).")
+    parser.add_argument("--no-judge", action="store_true",
+                        help="Désactive le LLM-as-judge en mode full. Sans effet en mode ragas : "
+                             "les métriques RAGAS (par affirmation) requièrent toujours le juge.")
     parser.add_argument("--limit", type=int, default=0, help="N'évalue que les N premières questions (0 = toutes).")
     parser.add_argument("--source-filter", default=None, help="Restreint le retrieval à un document source.")
     parser.add_argument("--no-save", action="store_true", help="Ne sauvegarde pas le run dans MongoDB.")
@@ -220,7 +222,9 @@ def main():
     if args.limit > 0:
         items = items[:args.limit]
     source_filter = args.source_filter  # None = recherche sur tout l'index
-    use_judge = (args.mode in ("full", "ragas")) and not args.no_judge
+    # Le mode ragas requiert TOUJOURS le juge (métriques par affirmation) ; --no-judge
+    # ne s'applique qu'au mode full.
+    use_judge = (args.mode == "ragas") or (args.mode == "full" and not args.no_judge)
     run_name = args.name or f"{args.mode}-{time.strftime('%Y%m%d-%H%M%S')}"
 
     logger.info("Run « %s » : %d questions, mode=%s, judge=%s",
