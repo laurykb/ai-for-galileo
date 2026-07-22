@@ -7,8 +7,8 @@ Deux niveaux de métriques :
 NIVEAU 1 - Heuristiques rapides (sans LLM, instantanées) :
   - exact_match        : la référence est-elle contenue dans la réponse ?
   - f1_token           : overlap token SQuAD entre réponse générée et référence
-  - context_recall     : les chunks couvrent-ils les tokens de la référence ?
-  - context_precision  : les topK chunks sont-ils pertinents (F1 > seuil) ?
+  - context_recall_lexical     : les chunks couvrent-ils les tokens de la référence ?
+  - context_precision_lexical  : les topK chunks sont-ils pertinents (F1 > seuil) ?
 
 NIVEAU 2 - LLM-as-a-judge local (Ollama, comme RAGAS) :
   - faithfulness_llm       : la réponse ne contient-elle que ce qui est dans le contexte ?
@@ -65,7 +65,7 @@ def f1_token(generated: str, reference: str) -> float:
     return 2 * precision * recall / (precision + recall)
 
 
-def context_recall(chunks: list, reference: str) -> float:
+def context_recall_lexical(chunks: list, reference: str) -> float:
     if not reference or not chunks:
         return 0.0
     ref_tok = _tokens(reference)
@@ -77,7 +77,7 @@ def context_recall(chunks: list, reference: str) -> float:
     return len(ref_tok & covered) / len(ref_tok)
 
 
-def context_precision(chunks: list, reference: str, topk: int = 5) -> float:
+def context_precision_lexical(chunks: list, reference: str, topk: int = 5) -> float:
     if not reference or not chunks:
         return 0.0
     relevant = sum(
@@ -164,7 +164,7 @@ def decompose_claims(text: str, llm=None) -> list[str]:
 #  NIVEAU 2b - Métriques RAGAS par affirmation (fidélité / rappel de contexte)
 # -----------------------------------------------------------------------------
 #
-# Contrairement à faithfulness_llm/context_recall (un seul score global), ces
+# Contrairement à faithfulness_llm/context_recall_lexical (un seul score global), ces
 # variantes décomposent le texte en affirmations atomiques (decompose_claims)
 # puis jugent chacune individuellement (_judge_supported) - style RAGAS.
 
@@ -507,8 +507,8 @@ def evaluate_single(
     if has_ref:
         metrics["exact_match"]       = exact_match(generated_answer, reference_answer)
         metrics["f1_token"]          = f1_token(generated_answer, reference_answer)
-        metrics["context_recall"]    = context_recall(retrieved_chunks, reference_answer)
-        metrics["context_precision"] = context_precision(retrieved_chunks, reference_answer, topk=topk_precision)
+        metrics["context_recall"]    = context_recall_lexical(retrieved_chunks, reference_answer)
+        metrics["context_precision"] = context_precision_lexical(retrieved_chunks, reference_answer, topk=topk_precision)
     else:
         metrics["exact_match"]       = None
         metrics["f1_token"]          = None

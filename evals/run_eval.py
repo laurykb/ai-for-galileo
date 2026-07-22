@@ -4,16 +4,19 @@ Harnais d'évaluation du RAG - exécutable.
 Charge un jeu de Q/R doré, lance le pipeline, calcule les métriques et compare
 au run précédent (non-régression). S'appuie sur core/evaluation.py.
 
-Deux modes :
+Trois modes :
   - retrieval : retrieval seul (rapide, sans génération) -> métriques de RECHERCHE
-                (hit@k mots-clés, rappel/précision du contexte).
+                (hit@k mots-clés, rappel/précision lexicaux du contexte).
   - full      : pipeline complet -> métriques de RÉPONSE (fidélité, pertinence,
                 exact match, F1) en plus des métriques de recherche.
+  - ragas     : pipeline complet -> métriques RAGAS par affirmation (fidélité,
+                rappel/précision du contexte, pertinence de la réponse), style RAGAS.
 
 Usage (depuis la racine du projet) :
   PYTHONUTF8=1 python -m evals.run_eval --mode retrieval
   PYTHONUTF8=1 python -m evals.run_eval --mode full --no-judge --limit 3
   PYTHONUTF8=1 python -m evals.run_eval --mode full            # avec LLM-as-judge (lent)
+  PYTHONUTF8=1 python -m evals.run_eval --mode ragas --limit 3 # métriques RAGAS par affirmation
 """
 from __future__ import annotations
 
@@ -30,8 +33,8 @@ logger = get_logger("rag.eval")
 _METRIC_KEYS = [
     "keyword_hit_rate", "context_recall", "context_precision",
     "exact_match", "f1_token", "faithfulness", "answer_relevance",
-    "context_relevance", "taux_affirmations_sourcees", "precision_attribution",
-    "latency_s", "num_chunks_retrieved",
+    "answer_relevancy", "context_relevance", "taux_affirmations_sourcees",
+    "precision_attribution", "latency_s", "num_chunks_retrieved",
 ]
 
 _DEFAULT_DATASET = Path(__file__).resolve().parent / "golden_qa_anssi_v2.json"
@@ -81,7 +84,8 @@ def _attribution_metrics(metrics: dict, question: str, generated: str,
 def _evaluate_item(item: dict, mode: str, source_filter: str, use_judge: bool, judge) -> dict:
     from core.ask import process_query, retrieve_only
     from core.evaluation import (
-        evaluate_single, keyword_hit_rate, context_recall, context_precision,
+        evaluate_single, keyword_hit_rate, context_recall_lexical, context_precision_lexical,
+        faithfulness_ragas, context_recall_ragas, context_precision_ragas, answer_relevancy_ragas,
     )
 
     question = (item.get("question") or "").strip()
@@ -96,8 +100,20 @@ def _evaluate_item(item: dict, mode: str, source_filter: str, use_judge: bool, j
             metrics = {
                 "question": question,
                 "keyword_hit_rate": keyword_hit_rate(chunks, expected_kw),
-                "context_recall": context_recall(chunks, reference) if reference else None,
-                "context_precision": context_precision(chunks, reference) if reference else None,
+                "context_recall": context_recall_lexical(chunks, reference) if reference else None,
+                "context_precision": context_precision_lexical(chunks, reference) if reference else None,
+                "num_chunks_retrieved": len(chunks),
+            }
+        elif mode == "ragas":
+            generated, chunks, _ = process_query(question, source_filter=source_filter)
+            chunks = chunks or []
+            metrics = {
+                "question": question,
+                "faithfulness": faithfulness_ragas(generated or "", chunks, llm=judge),
+                "context_recall": context_recall_ragas(reference, chunks, llm=judge) if reference else None,
+                "context_precision": context_precision_ragas(question, reference, chunks, llm=judge) if reference else None,
+                "answer_relevancy": answer_relevancy_ragas(generated or "", question, llm=judge),
+                "keyword_hit_rate": keyword_hit_rate(chunks, expected_kw),
                 "num_chunks_retrieved": len(chunks),
             }
         else:  # full
@@ -189,9 +205,10 @@ def _print_regression(previous: dict, agg: dict):
 def main():
     parser = argparse.ArgumentParser(description="Harnais d'évaluation du RAG.")
     parser.add_argument("--dataset", default=str(_DEFAULT_DATASET), help="Chemin du jeu Q/R doré (JSON).")
-    parser.add_argument("--mode", choices=["retrieval", "full"], default="retrieval",
-                        help="retrieval = recherche seule (rapide) ; full = pipeline complet.")
-    parser.add_argument("--no-judge", action="store_true", help="Désactive le LLM-as-judge (mode full).")
+    parser.add_argument("--mode", choices=["retrieval", "full", "ragas"], default="retrieval",
+                        help="retrieval = recherche seule (rapide) ; full = pipeline complet ; "
+                             "ragas = pipeline complet + métriques RAGAS par affirmation.")
+    parser.add_argument("--no-judge", action="store_true", help="Désactive le LLM-as-judge (modes full/ragas).")
     parser.add_argument("--limit", type=int, default=0, help="N'évalue que les N premières questions (0 = toutes).")
     parser.add_argument("--source-filter", default=None, help="Restreint le retrieval à un document source.")
     parser.add_argument("--no-save", action="store_true", help="Ne sauvegarde pas le run dans MongoDB.")
@@ -203,7 +220,7 @@ def main():
     if args.limit > 0:
         items = items[:args.limit]
     source_filter = args.source_filter  # None = recherche sur tout l'index
-    use_judge = (args.mode == "full") and not args.no_judge
+    use_judge = (args.mode in ("full", "ragas")) and not args.no_judge
     run_name = args.name or f"{args.mode}-{time.strftime('%Y%m%d-%H%M%S')}"
 
     logger.info("Run « %s » : %d questions, mode=%s, judge=%s",
