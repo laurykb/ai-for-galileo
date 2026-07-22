@@ -203,7 +203,16 @@ def ingest_markdown(md_path: str, output_dir: str | None = None,
             logger.info("RAPTOR : %d résumés ajoutés -> %d docs total", len(summary_docs), len(docs))
         else:
             stats["raptor"] = {"enabled": False, "summaries_generated": 0}
-        
+
+        # Filtrer les chunks vides : ils polluent BM25 (token vide) et le pool de
+        # candidats sémantique sans jamais rien apporter à une réponse.
+        _before = len(docs)
+        docs = [d for d in docs if (getattr(d, "page_content", "") or "").strip()]
+        _removed = _before - len(docs)
+        if _removed:
+            logger.info("Chunks vides écartés avant indexation : %d", _removed)
+        stats["empty_chunks_removed"] = _removed
+
         _notify_progress(progress_callback, "Construction du vocabulaire...", 55)
         
         # 4) Construction du vocabulaire
