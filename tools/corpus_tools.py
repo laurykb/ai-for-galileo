@@ -73,7 +73,7 @@ def list_sources() -> dict:
 
 def extract_from_document_tool(document: str, aspect: str) -> dict:
     """Extrait d'UN document tous les éléments d'un aspect (MAP réutilisable)."""
-    if not document or not aspect:
+    if not (document or "").strip() or not (aspect or "").strip():
         return {"ok": False, "error": "document et aspect requis."}
     try:
         from core.corpus_extract import extract_from_document

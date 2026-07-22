@@ -14,3 +14,10 @@ def test_extract_tool(monkeypatch):
                         lambda document, aspect: {"document": document, "items": ["X"], "raw": ""})
     out = extract_from_document_tool("a.md", "attaques")
     assert out["ok"] is True and out["items"] == ["X"] and out["document"] == "a.md"
+
+
+def test_extract_tool_rejects_whitespace_only_args():
+    out = extract_from_document_tool("   ", "attaques")
+    assert out["ok"] is False and "requis" in out["error"]
+    out = extract_from_document_tool("a.md", "  \t\n")
+    assert out["ok"] is False and "requis" in out["error"]

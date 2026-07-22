@@ -49,3 +49,73 @@ def test_pipeline_no_relevant_docs(monkeypatch):
     assert done["type"] == "done"
     assert done["result"]["documents"] == []
     assert done["result"]["n_items"] == 0
+
+
+def test_map_error_isolated(monkeypatch):
+    """Un échec extract() sur UN document ne fait pas échouer tout le run : ce
+    document apparaît dans un événement `map` avec n_items=0, les autres docs
+    atteignent le reduce normalement, et `done` est bien émis."""
+    monkeypatch.setenv("CORPUS_MAP_CONCURRENCY", "1")
+    prefilter = lambda aspect: ["broken.md", "b.md"]
+
+    def extract(document, aspect):
+        if document == "broken.md":
+            raise TimeoutError("Ollama timeout")
+        return {"document": document, "items": ["Injection SQL"], "raw": ""}
+
+    def reduce_llm(prompt):
+        return "**Applicatif**\n- Injection SQL [src: b.md]"
+
+    events = list(synthesize_corpus("catégorise", aspect="attaques",
+                                    llm=reduce_llm, prefilter=prefilter, extract=extract))
+
+    map_events = {e["document"]: e for e in events if e["type"] == "map"}
+    assert map_events["broken.md"]["n_items"] == 0
+    assert map_events["b.md"]["n_items"] == 1
+
+    done = events[-1]
+    assert done["type"] == "done"
+    assert set(done["result"]["documents"]) == {"broken.md", "b.md"}
+    assert done["result"]["n_items"] == 1
+    assert "Injection SQL" in done["result"]["answer"]
+
+
+def test_reduce_batched_when_material_large(monkeypatch):
+    """Un matériau MAP qui dépasse _MAX_MATERIAL_CHARS déclenche un REDUCE par lots
+    borné (jamais un unique appel LLM qui tronquerait silencieusement)."""
+    monkeypatch.setenv("CORPUS_MAP_CONCURRENCY", "1")
+
+    # 10 docs, chacun avec un item très long (~3000 chars) => matériau total > 24000.
+    n_docs = 10
+    docs = [f"doc{i}.md" for i in range(n_docs)]
+    long_item = "X" * 3000
+
+    prefilter = lambda aspect: docs
+
+    def extract(document, aspect):
+        return {"document": document, "items": [long_item], "raw": ""}
+
+    calls = []
+
+    def counting_llm(prompt):
+        calls.append(prompt)
+        return f"synthèse partielle {len(calls)} [src: doc0.md]"
+
+    events = list(synthesize_corpus("catégorise", aspect="attaques",
+                                    llm=counting_llm, prefilter=prefilter, extract=extract))
+
+    reduce_stage_events = [e for e in events if e["type"] == "stage" and e["stage"] == "reduce"]
+    assert len(reduce_stage_events) == 1
+    reduce_stage = reduce_stage_events[0]
+    assert reduce_stage.get("batched") is True
+    n_batches = reduce_stage["batches"]
+    assert n_batches > 1
+
+    # n_batches appels de réduction partielle + 1 appel de fusion finale.
+    assert len(calls) == n_batches + 1
+
+    done = events[-1]
+    assert done["type"] == "done"
+    assert set(done["result"]["documents"]) == set(docs)
+    assert done["result"]["n_items"] == n_docs
+    assert done["result"]["answer"].strip() != ""
