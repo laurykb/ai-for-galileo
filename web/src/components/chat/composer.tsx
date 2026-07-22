@@ -122,6 +122,19 @@ export function Composer({
                 <option key={d.name} value={d.name}>{d.name}</option>
               ))}
             </select>
+            {selected !== "" && (
+              <button
+                type="button"
+                onClick={() => setSelected("")}
+                disabled={busy}
+                title="Périmètre restreint à ce document — cliquer pour revenir à tous les documents"
+                aria-label={`Périmètre : ${selected} — revenir à tous les documents`}
+                className="inline-flex max-w-56 cursor-pointer items-center gap-1 truncate rounded-full border border-accent/40 bg-accent/10 px-2 py-0.5 text-[11px] text-fg-muted transition-colors hover:text-foreground disabled:cursor-default disabled:opacity-40"
+              >
+                <span className="truncate">Périmètre : {selected}</span>
+                <span aria-hidden>✕</span>
+              </button>
+            )}
             {models.length > 0 && (
               <select
                 value={genModel}
