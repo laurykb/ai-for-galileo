@@ -242,9 +242,14 @@ def get_config() -> Dict[str, Any]:
         "USE_CROSS_ENCODER": use_cross_encoder,
         "CE_DEVICE": ce_device,
         "CROSS_ENCODER_LOCAL_PATH": cross_encoder_model,
-        # Seuil hors-scope : le cross-encoder renvoie ~0.500 (neutre) pour le hors-sujet
-        # et juste au-dessus pour l'in-domain. 0.505 les sépare (calibré).
-        "CE_RELEVANCE_THRESHOLD": float(os.environ.get("CE_RELEVANCE_THRESHOLD", "0.48")),
+        # Seuil hors-scope : le cross-encoder renvoie ~0.500 (neutre/plancher) pour le
+        # hors-sujet, quel que soit le sujet. Le seuil doit rester JUSTE AU-DESSUS de ce
+        # plancher pour que le hors-sujet s'abstienne ; les questions exploratoires
+        # (génériques/définitionnelles) contournent cette porte via retrieval.intent.
+        # is_exploratory (core.ask._should_abstain), donc ce seuil ne les affecte pas.
+        # Valeur calibrée par éval (evals/run_eval --mode retrieval + scripts/probe_retrieval) :
+        # voir .superpowers/sdd/task-9-calibration-report.md.
+        "CE_RELEVANCE_THRESHOLD": float(os.environ.get("CE_RELEVANCE_THRESHOLD", "0.505")),
     }
     
     # --------------------- RETRIEVAL & RANKING -------------------

@@ -15,5 +15,7 @@ def test_rebalanced_defaults():
     # Poids rééquilibrés (départ 0.5/0.5) et somme cohérente.
     assert abs((ec.WEIGHT_SEMANTIC + ec.WEIGHT_BM25) - 1.0) < 1e-6
     assert ec.WEIGHT_SEMANTIC >= 0.4
-    # Seuil recalibré sous 0.5 (marge au-dessus du plancher de bruit gérée par l'intention).
-    assert ec.CE_RELEVANCE_THRESHOLD < 0.505
+    # Seuil calibré juste au-dessus du plancher de bruit du CE (~0.50) pour que le
+    # hors-sujet s'abstienne (les questions exploratoires contournent ce seuil via
+    # retrieval.intent.is_exploratory, donc elles ne sont pas affectées).
+    assert ec.CE_RELEVANCE_THRESHOLD <= 0.505
