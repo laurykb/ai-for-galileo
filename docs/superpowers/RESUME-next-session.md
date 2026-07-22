@@ -49,10 +49,21 @@ multi-document exhaustive et fiable sur 5-10 docs
 Run `ragas-baseline-v0-final` (30 questions, code parallèle) — lire l'agrégat dans
 `evals/last_eval.json` ou Mongo `eval_runs`. Valeurs à reporter ici :
 <!-- BASELINE_METRICS -->
-(en cours de calcul — à compléter à la fin du run)
+**BASELINE (ragas-baseline-v0-final, 30 q, Mongo eval_runs id=6a60d0d645ad8dc54ca9c29d) :**
+- context_recall = **0.529**
+- context_precision = **0.809** (rank-aware)
+- faithfulness = **0.495**
+- answer_relevancy = ~**0.53** (sanity limit-2 ; ABSENT de l'agrégat sauvegardé du
+  run complet → petit bug d'agrégation à corriger : la clé `answer_relevancy`
+  n'est pas remontée dans l'agrégat/`last_eval.json`. À vérifier dans
+  `evals/run_eval._aggregate` avant la 1re mesure Vague 1.)
+- latence = **40 s/question** (série entre questions, jugements parallèles ; full
+  2-GPU = optim question-level notée).
 
-Repère (1er run, code antérieur, answer_relevancy manquant) : context_recall
-0.536, context_precision 0.817, faithfulness 0.548.
+⚠️ **Correctif à faire en priorité next session** : answer_relevancy manque dans
+l'agrégat du mode ragas (présent par-question, perdu à l'agrégation) ; et le mode
+ragas n'écrit pas `evals/last_eval.json` (sauvegarde Mongo seulement). Fixer les
+deux pour que la boussole soit complète avant de mesurer la Vague 1.
 
 ## Tâches restantes (dans l'ordre)
 
