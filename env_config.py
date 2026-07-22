@@ -349,6 +349,13 @@ def get_config() -> Dict[str, Any]:
         "NUM_CHUNKS_PARENT_CHILD": int(os.environ.get("NUM_CHUNKS_PARENT_CHILD", "8")),
     }
     
+    # --------------------- CORPUS PIPELINE -------------------
+    corpus_config = {
+        "CORPUS_MAP_CONCURRENCY": int(os.environ.get("CORPUS_MAP_CONCURRENCY", "2")),
+        "CORPUS_MAX_DOCS": int(os.environ.get("CORPUS_MAX_DOCS", "50")),
+        "CORPUS_PREFILTER_TOPN": int(os.environ.get("CORPUS_PREFILTER_TOPN", "200")),
+    }
+
     # --------------------- COLLECTION CHROMA DB -------------------
     chroma_config = {
         "COLLECTION_NAME": os.environ.get("COLLECTION_NAME", "test_rag"),
@@ -376,6 +383,7 @@ def get_config() -> Dict[str, Any]:
         **enhancement_config,
         **self_rag_config,
         **parent_child_config,
+        **corpus_config,
         **chroma_config,
         **messages_config,
         # Infos système
@@ -460,6 +468,10 @@ SELF_RAG_MAX_RETRIES = CONFIG["SELF_RAG_MAX_RETRIES"]
 PARENT_CHILD_ENABLED = CONFIG["PARENT_CHILD_ENABLED"]
 PARENT_CHILD_MAX_CHARS = CONFIG["PARENT_CHILD_MAX_CHARS"]
 NUM_CHUNKS_PARENT_CHILD = CONFIG["NUM_CHUNKS_PARENT_CHILD"]
+
+CORPUS_MAP_CONCURRENCY = CONFIG["CORPUS_MAP_CONCURRENCY"]
+CORPUS_MAX_DOCS = CONFIG["CORPUS_MAX_DOCS"]
+CORPUS_PREFILTER_TOPN = CONFIG["CORPUS_PREFILTER_TOPN"]
 
 COLLECTION_NAME = CONFIG["COLLECTION_NAME"]
 
