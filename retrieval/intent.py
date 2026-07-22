@@ -17,14 +17,14 @@ def _norm(text: str) -> str:
 _AGGREGATE = re.compile(
     r"\b(tous les|toutes les|l'ensemble des|chaque (document|attaque|menace|exigence|"
     r"categorie)|recense|inventaire|categorise|categoriser|enumere|enumerer|"
-    r"classe (les|toutes|tous)|liste (moi|nous|les|toutes|tous|l')|"
+    r"classe (les|toutes|tous)|liste[- ](moi|nous|les|toutes|tous|l')|"
     r"dans tout le corpus|sur tout le corpus|(de|du|dans le) corpus|"
     r"a travers (les|tous|toutes))")
 
 # Générique / définitionnel : on ne doit PAS abstenir dessus.
 _EXPLORATORY = re.compile(
     r"\b(de quoi (parle|traite|s'agit)|c'est quoi|qu'est ce que|qu'est-ce que|"
-    r"quel est le sujet|que dit (le|ce) document|resume|resumer|resumé|synthese|"
+    r"quel est le sujet|que dit (le|ce) document|resume|resumer|synthese|"
     r"presente|presentation|explique|explication|vue d'ensemble|apercu|generalites)")
 
 

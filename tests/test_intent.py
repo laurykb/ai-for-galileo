@@ -6,6 +6,8 @@ def test_aggregate_intent():
     assert classify_intent("Catégorise toutes les attaques connues de ce corpus") == "aggregate"
     assert classify_intent("Liste-moi l'ensemble des exigences du corpus") == "aggregate"
     assert is_aggregate("Recense toutes les menaces dans tous les documents") is True
+    # "liste-moi" (tiret) doit matcher indépendamment de "l'ensemble des".
+    assert is_aggregate("Liste-moi les exigences de chiffrement") is True
 
 
 def test_exploratory_intent():

@@ -247,8 +247,7 @@ def get_config() -> Dict[str, Any]:
         # plancher pour que le hors-sujet s'abstienne ; les questions exploratoires
         # (génériques/définitionnelles) contournent cette porte via retrieval.intent.
         # is_exploratory (core.ask._should_abstain), donc ce seuil ne les affecte pas.
-        # Valeur calibrée par éval (evals/run_eval --mode retrieval + scripts/probe_retrieval) :
-        # voir .superpowers/sdd/task-9-calibration-report.md.
+        # Valeur calibrée par éval (evals/run_eval --mode retrieval + scripts/probe_retrieval).
         "CE_RELEVANCE_THRESHOLD": float(os.environ.get("CE_RELEVANCE_THRESHOLD", "0.505")),
     }
     

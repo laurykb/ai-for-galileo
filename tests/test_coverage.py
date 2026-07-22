@@ -30,11 +30,24 @@ def test_no_change_when_all_present():
 
 
 def test_cap_respected_and_floored_survive():
-    # base_k=3 -> top3 tous BIG ; SMALL doit entrer malgré le plafond serré.
+    # base_k=3 -> top3 tous BIG ; headroom (max_chunks=4) laisse 1 slot de largeur
+    # -> SMALL doit entrer dans ce budget restant.
     items = _big(5) + [_mk("SMALL", 0.40, 99)]
-    out = apply_coverage_floor(items, base_k=3, per_doc_floor=1, max_chunks=3, floor_min_ce=0.3)
-    assert len(out) <= 3
+    out = apply_coverage_floor(items, base_k=3, per_doc_floor=1, max_chunks=4, floor_min_ce=0.3)
+    assert len(out) <= 4
     assert "SMALL" in {it["meta"]["source"] for it in out}
+
+
+def test_depth_protected_against_breadth_flood():
+    # 5 strong "A" chunks + 30 marginal distinct sources; cap=10.
+    items = [_mk("A", 0.90 - i*0.001, i) for i in range(5)] + \
+            [_mk(f"B{i}", 0.60 - i*0.001, 100+i) for i in range(30)]
+    out = apply_coverage_floor(items, base_k=5, per_doc_floor=1, max_chunks=10, floor_min_ce=0.3)
+    assert len(out) == 10
+    srcs = [it["meta"]["source"] for it in out]
+    assert srcs.count("A") == 5          # all 5 best-match depth chunks protected
+    # remaining 5 slots are breadth (distinct B sources), none evicting an A
+    assert len([s for s in srcs if s.startswith("B")]) == 5
 
 
 def test_empty_input():

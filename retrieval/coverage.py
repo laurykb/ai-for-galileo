@@ -21,8 +21,14 @@ def elastic_candidate_pool(n_docs, pool_min, pool_max, per_doc):
 
 def apply_coverage_floor(items, base_k, per_doc_floor=1, max_chunks=24, floor_min_ce=None):
     """Complète le top `base_k` global pour garantir `per_doc_floor` chunks par
-    source éligible (ce_score >= floor_min_ce si fourni), sans jamais dépasser
-    `max_chunks` ni écarter un chunk planché. `items` supposé trié ce_score desc."""
+    source éligible (ce_score >= floor_min_ce si fourni). `items` supposé trié
+    ce_score desc.
+
+    Précédence en cas de dépassement de `max_chunks` : le top `base_k` naturel
+    (profondeur) est PROTÉGÉ jusqu'à `max_chunks` ; la couverture par document
+    (largeur, planchée) ne remplit que le budget RESTANT (max_chunks - base_k
+    retenus). La largeur ne peut donc jamais évincer la profondeur ; le résultat
+    ne dépasse jamais `max_chunks`."""
     if not items:
         return items
 
@@ -47,15 +53,9 @@ def apply_coverage_floor(items, base_k, per_doc_floor=1, max_chunks=24, floor_mi
 
     result = selected + floored
     if len(result) > max_chunks:
-        floored_ids = {id(x) for x in floored}
-        protected = [x for x in result if id(x) in floored_ids]
-        others = [x for x in result if id(x) not in floored_ids]
-        others.sort(key=_ce, reverse=True)
-        protected.sort(key=_ce, reverse=True)
-        keep_others = others[: max(0, max_chunks - len(protected))]
-        result = keep_others + protected
-        if len(result) > max_chunks:  # floored alone exceed the cap
-            result = sorted(result, key=_ce, reverse=True)[:max_chunks]
-
+        kept_selected = selected[:max_chunks]                 # depth: natural top always survive
+        floor_budget = max(0, max_chunks - len(kept_selected))
+        kept_floored = sorted(floored, key=_ce, reverse=True)[:floor_budget]  # breadth fills leftover
+        result = kept_selected + kept_floored
     result.sort(key=_ce, reverse=True)
     return result
