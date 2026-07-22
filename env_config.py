@@ -348,7 +348,14 @@ def get_config() -> Dict[str, Any]:
         "PARENT_CHILD_MAX_CHARS": int(os.environ.get("PARENT_CHILD_MAX_CHARS", "4000")),
         "NUM_CHUNKS_PARENT_CHILD": int(os.environ.get("NUM_CHUNKS_PARENT_CHILD", "8")),
     }
-    
+
+    # --------------------- VAGUE 1 -------------------
+    vague1_config = {
+        "HYPE_ENABLED": os.environ.get("HYPE_ENABLED", "false").lower() in ("true", "1", "yes"),
+        "HYPE_MAX_QUESTIONS": int(os.environ.get("HYPE_MAX_QUESTIONS", "3")),
+        "CONTEXT_HEADERS_ENABLED": os.environ.get("CONTEXT_HEADERS_ENABLED", "false").lower() in ("true", "1", "yes"),
+    }
+
     # --------------------- CORPUS PIPELINE -------------------
     corpus_config = {
         "CORPUS_MAP_CONCURRENCY": int(os.environ.get("CORPUS_MAP_CONCURRENCY", "4")),
@@ -391,6 +398,7 @@ def get_config() -> Dict[str, Any]:
         **enhancement_config,
         **self_rag_config,
         **parent_child_config,
+        **vague1_config,
         **corpus_config,
         **ragas_config,
         **chroma_config,
@@ -477,6 +485,10 @@ SELF_RAG_MAX_RETRIES = CONFIG["SELF_RAG_MAX_RETRIES"]
 PARENT_CHILD_ENABLED = CONFIG["PARENT_CHILD_ENABLED"]
 PARENT_CHILD_MAX_CHARS = CONFIG["PARENT_CHILD_MAX_CHARS"]
 NUM_CHUNKS_PARENT_CHILD = CONFIG["NUM_CHUNKS_PARENT_CHILD"]
+
+HYPE_ENABLED = CONFIG["HYPE_ENABLED"]
+HYPE_MAX_QUESTIONS = CONFIG["HYPE_MAX_QUESTIONS"]
+CONTEXT_HEADERS_ENABLED = CONFIG["CONTEXT_HEADERS_ENABLED"]
 
 CORPUS_MAP_CONCURRENCY = CONFIG["CORPUS_MAP_CONCURRENCY"]
 CORPUS_MAX_DOCS = CONFIG["CORPUS_MAX_DOCS"]
