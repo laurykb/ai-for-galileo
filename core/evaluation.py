@@ -123,6 +123,13 @@ def _ask_judge(llm, prompt: str, max_retries: int = 2) -> float:
             m10 = re.search(r"(\d+(?:\.\d+)?)\s*/\s*10", raw)
             if m10:
                 return min(1.0, float(m10.group(1)) / 10.0)
+            else:
+                # Sortie non parsable (ex. « Oui » sans nombre) : on retente, et au
+                # dernier essai on trace le texte brut — un juge dégénéré fausserait
+                # silencieusement la boussole RAGAS (biais vers 0). Diagnosticable.
+                if attempt == max_retries:
+                    logger.warning("[judge] Réponse non parsable (score=0.0) : %r",
+                                   raw[:200])
         except Exception as e:
             if attempt == max_retries:
                 logger.warning("[judge] Échec après %d tentatives : %s", max_retries, e)

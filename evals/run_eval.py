@@ -270,7 +270,9 @@ def main():
     # Code de sortie non-nul si une régression nette est détectée (utile en CI).
     if previous:
         prev_agg = previous.get("aggregate", {}) or {}
-        for k in ("keyword_hit_rate", "faithfulness", "answer_relevance"):
+        # Inclut answer_relevancy (mode ragas) ET answer_relevance (mode full).
+        for k in ("keyword_hit_rate", "faithfulness", "answer_relevance",
+                  "answer_relevancy", "context_recall", "context_precision"):
             cur, prev = agg.get(k), prev_agg.get(k)
             if cur is not None and prev is not None and cur - prev < -0.05:
                 print(f"\n[CI] Régression nette sur {k} ({prev:.3f} -> {cur:.3f}).")
