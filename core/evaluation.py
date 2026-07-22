@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import re
 import time
+import types
 from typing import Optional
 from utils.mongo import get_client
 from utils.logging_config import get_logger
@@ -157,6 +158,57 @@ def decompose_claims(text: str, llm=None) -> list[str]:
         if s:
             items.append(s)
     return items
+
+
+# -----------------------------------------------------------------------------
+#  NIVEAU 2b - Métriques RAGAS par affirmation (fidélité / rappel de contexte)
+# -----------------------------------------------------------------------------
+#
+# Contrairement à faithfulness_llm/context_recall (un seul score global), ces
+# variantes décomposent le texte en affirmations atomiques (decompose_claims)
+# puis jugent chacune individuellement (_judge_supported) - style RAGAS.
+
+def _judge_supported(claim: str, context: str, llm) -> bool:
+    """Le CONTEXTE soutient-il l'AFFIRMATION ? (juge LLM, >= 0.5 = soutenue)."""
+    prompt = f"""[TÂCHE] Le CONTEXTE soutient-il l'AFFIRMATION ? Réponds par un nombre : 1.0 = oui (directement justifiable), 0.0 = non.
+
+[CONTEXTE]
+{context[:2000]}
+
+[AFFIRMATION]
+{claim}
+
+Score :"""
+    judge = llm
+    if callable(judge) and not hasattr(judge, "invoke"):
+        # _ask_judge attend un objet .invoke -> on enveloppe un llm callable injecté.
+        judge = types.SimpleNamespace(invoke=judge)
+    return _ask_judge(judge, prompt) >= 0.5
+
+
+def _context_text(chunks: list, topk: int = 5, per: int = 500) -> str:
+    """Concatène les textes des topk premiers chunks (tronqués à `per` caractères chacun)."""
+    return "\n\n".join((c.get("doc", "") or "")[:per] for c in (chunks or [])[:topk])
+
+
+def faithfulness_ragas(generated: str, chunks: list, llm=None) -> float:
+    """Fidélité par affirmations : affirmations de la RÉPONSE soutenues par le contexte / total."""
+    claims = decompose_claims(generated, llm=llm)
+    if not claims or not chunks:
+        return 0.0
+    ctx = _context_text(chunks)
+    supported = sum(1 for c in claims if _judge_supported(c, ctx, llm))
+    return supported / len(claims)
+
+
+def context_recall_ragas(reference: str, chunks: list, llm=None) -> float:
+    """Rappel de contexte par affirmations : affirmations de la RÉFÉRENCE attribuables au contexte récupéré / total."""
+    claims = decompose_claims(reference, llm=llm)
+    if not claims or not chunks:
+        return 0.0
+    ctx = _context_text(chunks)
+    attrib = sum(1 for c in claims if _judge_supported(c, ctx, llm))
+    return attrib / len(claims)
 
 
 def faithfulness_llm(generated: str, chunks: list, llm=None) -> float:
