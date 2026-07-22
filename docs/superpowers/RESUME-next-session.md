@@ -53,17 +53,19 @@ Run `ragas-baseline-v0-final` (30 questions, code parallèle) — lire l'agréga
 - context_recall = **0.529**
 - context_precision = **0.809** (rank-aware)
 - faithfulness = **0.495**
-- answer_relevancy = ~**0.53** (sanity limit-2 ; ABSENT de l'agrégat sauvegardé du
-  run complet → petit bug d'agrégation à corriger : la clé `answer_relevancy`
-  n'est pas remontée dans l'agrégat/`last_eval.json`. À vérifier dans
-  `evals/run_eval._aggregate` avant la 1re mesure Vague 1.)
+- answer_relevancy = **0.599** (agrégat complet 30 q, recalculé après correctif ;
+  l'estimation ~0.53 était un sanity limit-2)
+- keyword_hit_rate = **0.656**
 - latence = **40 s/question** (série entre questions, jugements parallèles ; full
   2-GPU = optim question-level notée).
 
-⚠️ **Correctif à faire en priorité next session** : answer_relevancy manque dans
-l'agrégat du mode ragas (présent par-question, perdu à l'agrégation) ; et le mode
-ragas n'écrit pas `evals/last_eval.json` (sauvegarde Mongo seulement). Fixer les
-deux pour que la boussole soit complète avant de mesurer la Vague 1.
+✅ **Correctif agrégat RAGAS — FAIT (2026-07-22)** : `aggregate_metrics`
+(`core/evaluation.py`) remonte désormais `answer_relevancy` et `keyword_hit_rate` ;
+`run_eval` écrit `evals/last_eval.json` (helper `_write_last_eval`, tous modes dont
+ragas). Régression couverte : `tests/test_evaluation_ragas.py` +
+`tests/test_run_eval_ragas.py`. L'agrégat baseline en Mongo (id=6a60d0d6…) a été
+backfillé et `evals/last_eval.json` reflète le vrai baseline 30 q. La boussole est
+complète : mesure Vague 1 possible.
 
 ## Tâches restantes (dans l'ordre)
 

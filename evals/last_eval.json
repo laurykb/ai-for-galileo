@@ -1,14 +1,19 @@
 {
-  "run_name": "retrieval-v2-readme",
-  "timestamp": "2026-07-02T13:40:30",
-  "mode": "retrieval",
-  "dataset": "golden_qa_anssi_v2.json",
+  "dataset": "ragas-baseline-v0-final",
+  "mode": "ragas",
+  "run_name": "ragas-baseline-v0-final",
   "num_questions": 30,
   "aggregate": {
-    "keyword_hit_rate": 0.6444,
-    "context_recall": 0.532,
-    "context_precision": 0.2933,
-    "latency_s": 0.2247,
-    "num_chunks_retrieved": 7.7333
+    "keyword_hit_rate": 0.6556,
+    "exact_match": null,
+    "f1_token": null,
+    "context_recall": 0.5292,
+    "context_precision": 0.8091,
+    "faithfulness": 0.4949,
+    "answer_relevance": null,
+    "answer_relevancy": 0.5993,
+    "context_relevance": null,
+    "latency_s": 40.1973,
+    "num_chunks_retrieved": 13.6667
   }
 }

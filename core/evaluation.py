@@ -634,8 +634,9 @@ def run_evaluation_batch(
 def aggregate_metrics(results: list) -> dict:
     """Calcule les moyennes de toutes les métriques numériques (ignore les None)."""
     keys = [
-        "exact_match", "f1_token", "context_recall", "context_precision",
-        "faithfulness", "answer_relevance", "context_relevance",
+        "keyword_hit_rate", "exact_match", "f1_token",
+        "context_recall", "context_precision",
+        "faithfulness", "answer_relevance", "answer_relevancy", "context_relevance",
         "latency_s", "num_chunks_retrieved",
     ]
     ok = [r for r in results if r.get("status") == "ok"]

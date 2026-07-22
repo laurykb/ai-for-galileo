@@ -132,3 +132,19 @@ def test_context_precision_parallel_matches_serial(monkeypatch):
     assert abs(serial - 0.75) < 1e-6
     assert abs(parallel - 0.75) < 1e-6
     assert serial == parallel
+
+
+def test_aggregate_includes_answer_relevancy_and_keyword_hit_rate():
+    """Régression : les métriques RAGAS answer_relevancy et keyword_hit_rate
+    présentes par-question doivent survivre à l'agrégation (sinon perdues à la
+    sauvegarde Mongo / last_eval.json — bug baseline v0)."""
+    from core.evaluation import aggregate_metrics
+    results = [
+        {"status": "ok", "answer_relevancy": 0.6, "keyword_hit_rate": 0.5,
+         "faithfulness": 0.9, "context_recall": 0.8},
+        {"status": "ok", "answer_relevancy": 0.8, "keyword_hit_rate": 0.7,
+         "faithfulness": 0.7, "context_recall": 0.6},
+    ]
+    agg = aggregate_metrics(results)
+    assert agg["answer_relevancy"] == 0.7
+    assert agg["keyword_hit_rate"] == 0.6

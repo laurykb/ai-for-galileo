@@ -38,6 +38,21 @@ _METRIC_KEYS = [
 ]
 
 _DEFAULT_DATASET = Path(__file__).resolve().parent / "golden_qa_anssi_v2.json"
+_LAST_EVAL_PATH = Path(__file__).resolve().parent / "last_eval.json"
+
+
+def _write_last_eval(path, dataset_name, mode, run_name, aggregate, num_questions):
+    """Archive l'agrégat du dernier run dans evals/last_eval.json (tous modes,
+    dont ragas). Boussole lisible hors Mongo. Best-effort côté appelant."""
+    payload = {
+        "dataset": dataset_name,
+        "mode": mode,
+        "run_name": run_name,
+        "num_questions": num_questions,
+        "aggregate": aggregate,
+    }
+    Path(path).write_text(json.dumps(payload, ensure_ascii=False, indent=2),
+                          encoding="utf-8")
 
 
 def _load_dataset(path: Path) -> dict:
@@ -255,6 +270,15 @@ def main():
     agg = _aggregate(results)
     _print_report(data.get("dataset", args.dataset), args.mode, results, agg)
     _print_regression(previous, agg)
+
+    # Archive l'agrégat hors Mongo (tous modes, dont ragas). Indépendant de la
+    # sauvegarde Mongo : la boussole reste lisible même si Mongo est absent.
+    try:
+        _write_last_eval(_LAST_EVAL_PATH, data.get("dataset", args.dataset),
+                         args.mode, run_name, agg, len(results))
+        print(f"\n[archive] Agrégat écrit dans {_LAST_EVAL_PATH}.")
+    except Exception as e:
+        logger.warning("Écriture de last_eval.json impossible : %s", e)
 
     if not args.no_save:
         try:
