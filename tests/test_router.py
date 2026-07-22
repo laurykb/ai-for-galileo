@@ -36,6 +36,25 @@ def test_multi_questions_routes_to_agent():
     assert "multi_questions" in d["signals"]
 
 
+def test_natural_comparison_routes_to_agent():
+    for q in ["Compare les menaces des deux cibles.",
+              "Quelle est la différence entre les exigences de A et de B ?",
+              "En quoi la cible X diffère-t-elle de la cible Y ?"]:
+        assert route_query(q)["mode"] == "agent", q
+
+
+def test_relational_multi_hop_routes_to_agent():
+    for q in ["Quels liens entre les hypothèses et les objectifs de sécurité ?",
+              "Quelles conséquences des menaces sur les exigences ?"]:
+        assert route_query(q)["mode"] == "agent", q
+
+
+def test_multi_document_natural_phrasings_route_to_agent():
+    for q in ["Pour chaque cible, donne le niveau EAL.",
+              "Recense les exigences à travers les documents."]:
+        assert route_query(q)["mode"] == "agent", q
+
+
 # -- route_query -> rag (cas courant) -------------------------------------------
 def test_direct_factual_routes_to_rag():
     d = route_query("Quel est le niveau EAL de la TOE ?")
@@ -46,6 +65,13 @@ def test_direct_factual_routes_to_rag():
 def test_simple_lookup_routes_to_rag():
     d = route_query("Donne la définition de la TOE.")
     assert d["mode"] == "rag"
+
+
+def test_simple_factual_still_rag():
+    for q in ["Quel est le niveau EAL de la TOE ?",
+              "Donne la définition de la TOE.",
+              "C'est quoi un IDS ?"]:
+        assert route_query(q)["mode"] == "rag", q
 
 
 # -- should_verify -------------------------------------------------------------

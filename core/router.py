@@ -38,14 +38,16 @@ def _norm(text: str) -> str:
 # -- Signaux de COMPLEXITÉ -> agent ReAct (motifs sur texte normalisé sans accents) --
 _AGENT_SIGNALS = {
     "comparaison": re.compile(
-        r"\b(compar|differen|versus|\bvs\b|par rapport a|contrairement|"
-        r"plutot que|distingu|oppos)"),
+        r"\b(compar|differen|differe|versus|\bvs\b|par rapport a|contrairement|"
+        r"plutot que|distingu|oppos|difference entre|ecart entre)"),
     "relationnel": re.compile(
-        r"\b(relation entre|lien entre|depend|entrain|consequence|impact de|"
-        r"influen|en quoi .* affect|comment .* affect)"),
+        r"\b(relation entre|lien entre|liens entre|depend|entrain|consequence|"
+        r"consequences? (de|des|sur)|impact de|influen|en quoi .* (diff|affect)|"
+        r"comment .* affect)"),
     "multi_documents": re.compile(
-        r"\b(les deux|chaque document|entre les (cibles|documents|targets)|"
-        r"dans tous les|d'un document a l'autre)"),
+        r"\b(les deux|chaque (document|cible|target)|pour chaque|entre les "
+        r"(cibles|documents|targets)|dans tous les|a travers (les|tous|toutes)|"
+        r"d'un document a l'autre|sur l'ensemble des)"),
 }
 
 
