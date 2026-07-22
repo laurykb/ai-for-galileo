@@ -32,14 +32,14 @@ _bm25_cache: dict = {}  # source_filter -> bm25_tuple (ou None si indisponible)
 
 
 def clear_retrieval_caches() -> None:
-    """Vide les caches process-level (vector store/BM25).
-
-    À appeler après une (ré)ingestion pour que les requêtes suivantes
-    rechargent les index fraîchement écrits au lieu de servir des données périmées.
-    """
+    """Vide les caches process-level (vector store + BM25, y compris le cache
+    BM25 fusionné de keyword_index). À appeler après une (ré)ingestion pour que
+    les requêtes suivantes rechargent les index fraîchement écrits."""
     global _vector_store
     _vector_store = None
     _bm25_cache.clear()
+    from indexing.keyword_index import invalidate_bm25_cache
+    invalidate_bm25_cache()  # vide le cache "__all__" de keyword_index
     logger.info("Caches de retrieval vidés (vector store/BM25)")
 
 def _get_vector_store():
