@@ -26,11 +26,27 @@ from __future__ import annotations
 import re
 import time
 import types
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 from utils.mongo import get_client
 from utils.logging_config import get_logger
+from env_config import RAGAS_JUDGE_CONCURRENCY
 
 logger = get_logger("rag.eval")
+
+
+# -----------------------------------------------------------------------------
+#  Helper de parallélisation (appels juge LLM indépendants)
+# -----------------------------------------------------------------------------
+
+def _parallel_map(fn, items, workers):
+    """Applique fn à chaque item en parallèle (ordre préservé). workers<=1 -> séquentiel.
+    Sûr pour des appels LLM (OllamaClient.invoke est un POST sans état partagé)."""
+    items = list(items)
+    if workers <= 1 or len(items) <= 1:
+        return [fn(x) for x in items]
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        return list(pool.map(fn, items))
 
 
 # -----------------------------------------------------------------------------
@@ -206,7 +222,7 @@ def faithfulness_ragas(generated: str, chunks: list, llm=None) -> float:
     if llm is None:
         llm = _get_judge_llm()
     ctx = _context_text(chunks)
-    supported = sum(1 for c in claims if _judge_supported(c, ctx, llm))
+    supported = sum(_parallel_map(lambda c: _judge_supported(c, ctx, llm), claims, RAGAS_JUDGE_CONCURRENCY))
     return supported / len(claims)
 
 
@@ -255,7 +271,7 @@ def context_recall_ragas(reference: str, chunks: list, llm=None) -> float:
     if llm is None:
         llm = _get_judge_llm()
     ctx = _context_text(chunks)
-    attrib = sum(1 for c in claims if _judge_supported(c, ctx, llm))
+    attrib = sum(_parallel_map(lambda c: _judge_supported(c, ctx, llm), claims, RAGAS_JUDGE_CONCURRENCY))
     return attrib / len(claims)
 
 
@@ -282,10 +298,16 @@ def context_precision_ragas(question: str, reference: str, chunks: list, topk: i
         return 0.0
     if llm is None:
         llm = _get_judge_llm()
+    # Jugement de pertinence PAR CHUNK en parallèle (indépendants), ordre préservé ;
+    # l'AP@k reste calculée séquentiellement ensuite (dépend du rang -> non parallélisable).
+    rels = _parallel_map(
+        lambda c: _judge_chunk_relevant(question, reference, c.get("doc", "") or "", llm),
+        kept, RAGAS_JUDGE_CONCURRENCY,
+    )
     hits = 0
     precisions = []
-    for i, c in enumerate(kept, 1):
-        if _judge_chunk_relevant(question, reference, c.get("doc", "") or "", llm):
+    for i, is_rel in enumerate(rels, 1):
+        if is_rel:
             hits += 1
             precisions.append(hits / i)
     if not precisions:

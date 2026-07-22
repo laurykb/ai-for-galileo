@@ -351,9 +351,17 @@ def get_config() -> Dict[str, Any]:
     
     # --------------------- CORPUS PIPELINE -------------------
     corpus_config = {
-        "CORPUS_MAP_CONCURRENCY": int(os.environ.get("CORPUS_MAP_CONCURRENCY", "2")),
+        "CORPUS_MAP_CONCURRENCY": int(os.environ.get("CORPUS_MAP_CONCURRENCY", "4")),
         "CORPUS_MAX_DOCS": int(os.environ.get("CORPUS_MAX_DOCS", "50")),
         "CORPUS_PREFILTER_TOPN": int(os.environ.get("CORPUS_PREFILTER_TOPN", "200")),
+    }
+
+    # --------------------- ÉVALUATION RAGAS -------------------
+    ragas_config = {
+        # Nombre d'appels juge LLM concurrents (par affirmation / par chunk) dans
+        # core/evaluation.py. Sûr : OllamaClient.invoke est un POST sans état partagé.
+        # Aligné sur OLLAMA_NUM_PARALLEL=4 (systemd) pour exploiter les 2 GPU.
+        "RAGAS_JUDGE_CONCURRENCY": int(os.environ.get("RAGAS_JUDGE_CONCURRENCY", "4")),
     }
 
     # --------------------- COLLECTION CHROMA DB -------------------
@@ -384,6 +392,7 @@ def get_config() -> Dict[str, Any]:
         **self_rag_config,
         **parent_child_config,
         **corpus_config,
+        **ragas_config,
         **chroma_config,
         **messages_config,
         # Infos système
@@ -472,6 +481,8 @@ NUM_CHUNKS_PARENT_CHILD = CONFIG["NUM_CHUNKS_PARENT_CHILD"]
 CORPUS_MAP_CONCURRENCY = CONFIG["CORPUS_MAP_CONCURRENCY"]
 CORPUS_MAX_DOCS = CONFIG["CORPUS_MAX_DOCS"]
 CORPUS_PREFILTER_TOPN = CONFIG["CORPUS_PREFILTER_TOPN"]
+
+RAGAS_JUDGE_CONCURRENCY = CONFIG["RAGAS_JUDGE_CONCURRENCY"]
 
 COLLECTION_NAME = CONFIG["COLLECTION_NAME"]
 

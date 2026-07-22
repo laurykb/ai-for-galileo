@@ -107,3 +107,28 @@ def test_answer_relevancy_mean_cosine(monkeypatch):
 def test_answer_relevancy_empty():
     from core import evaluation as E
     assert E.answer_relevancy_ragas("", "q", llm=lambda p: "", embed=lambda s: [1.0]) == 0.0
+
+
+def test_context_precision_parallel_matches_serial(monkeypatch):
+    """Le parallélisme (ThreadPoolExecutor) ne doit pas changer l'AP@k rank-aware :
+    même relevance jugée par chunk, mêmes résultats en workers=1 (séquentiel) et
+    workers=4 (concurrent) — seul l'ordre d'exécution des appels juge change."""
+    from core import evaluation as E
+
+    # Pertinence déterministe par contenu du chunk (positions 0 et 3 pertinentes sur 5).
+    def fake_judge_relevant(q, ref, doc, llm):
+        return doc in ("c0", "c3")
+
+    monkeypatch.setattr(E, "_judge_chunk_relevant", fake_judge_relevant)
+    chunks = [{"doc": f"c{i}"} for i in range(5)]
+
+    monkeypatch.setattr(E, "RAGAS_JUDGE_CONCURRENCY", 1)
+    serial = E.context_precision_ragas("q", "ref", chunks, topk=5, llm=object())
+
+    monkeypatch.setattr(E, "RAGAS_JUDGE_CONCURRENCY", 4)
+    parallel = E.context_precision_ragas("q", "ref", chunks, topk=5, llm=object())
+
+    # AP@k attendu = mean(precision@1, precision@4) = mean(1/1, 2/4) = 0.75
+    assert abs(serial - 0.75) < 1e-6
+    assert abs(parallel - 0.75) < 1e-6
+    assert serial == parallel
