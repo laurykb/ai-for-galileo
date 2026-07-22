@@ -13,6 +13,7 @@ from env_config import (
     RRF_K,
     WEIGHT_SEMANTIC, WEIGHT_BM25,
     SELF_RAG_ENABLED, NUM_CHUNKS_PARENT_CHILD,
+    PARENT_CHILD_ENABLED,
     CE_RELEVANCE_THRESHOLD, OUT_OF_SCOPE_MESSAGE,
     USE_CROSS_ENCODER,
     LOG_LEVEL,
@@ -176,6 +177,12 @@ def process_query(user_q: str, selected_chunks=None, system_prompt=None, source_
         return rep, final_chunks, citations  # (reponse, chunks, citations)
 
 
+def _effective_topk(parent_child_on):
+    """Top-k cohérent avec le vrai gate PC. None => suit PARENT_CHILD_ENABLED."""
+    active = PARENT_CHILD_ENABLED if parent_child_on is None else parent_child_on
+    return NUM_CHUNKS_PARENT_CHILD if active else NUM_CHUNKS
+
+
 def _prepare_retrieval(user_q: str, source_filter: str = None,
                        conversation_history: list = None,
                        parent_child_on: bool = None):
@@ -191,8 +198,7 @@ def _prepare_retrieval(user_q: str, source_filter: str = None,
 
     # Quand Parent-Child est actif, on réduit le topk pour éviter un contexte trop long
     # (chaque chunk enfant -> ~4000 chars de contexte parent -> 8 chunks -> ~32K total)
-    _pc_active = parent_child_on if parent_child_on is not None else True
-    _topk = NUM_CHUNKS_PARENT_CHILD if _pc_active else NUM_CHUNKS
+    _topk = _effective_topk(parent_child_on)
 
     with span("retrieve") as _rs:
         final_chunks, max_ce_score = hybrid_retrieve(
