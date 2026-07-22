@@ -51,8 +51,11 @@ def apply_coverage_floor(items, base_k, per_doc_floor=1, max_chunks=24, floor_mi
         protected = [x for x in result if id(x) in floored_ids]
         others = [x for x in result if id(x) not in floored_ids]
         others.sort(key=_ce, reverse=True)
+        protected.sort(key=_ce, reverse=True)
         keep_others = others[: max(0, max_chunks - len(protected))]
         result = keep_others + protected
+        if len(result) > max_chunks:  # floored alone exceed the cap
+            result = sorted(result, key=_ce, reverse=True)[:max_chunks]
 
     result.sort(key=_ce, reverse=True)
     return result

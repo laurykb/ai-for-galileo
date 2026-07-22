@@ -49,3 +49,11 @@ def test_elastic_pool_scales_with_corpus():
     assert elastic_candidate_pool(50, pool_min=40, pool_max=120, per_doc=3) == 120
     # Corpus vide/inconnu -> borne basse.
     assert elastic_candidate_pool(0, pool_min=40, pool_max=120, per_doc=3) == 40
+
+
+def test_cap_never_exceeded_with_many_sources():
+    # Regression test: many floor-eligible sources exceeding max_chunks budget.
+    items = [_mk("A", 0.90 - i*0.001, i) for i in range(5)] + \
+            [_mk(f"B{i}", 0.60 - i*0.001, 100+i) for i in range(30)]
+    out = apply_coverage_floor(items, base_k=5, per_doc_floor=1, max_chunks=24, floor_min_ce=0.3)
+    assert len(out) <= 24, f"Expected <= 24 chunks, got {len(out)}"
