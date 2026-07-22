@@ -55,6 +55,13 @@ def _degenerate(text: str) -> str | None:
 router = APIRouter()
 
 
+def _synthesize_corpus(question, **kwargs):
+    """Indirection paresseuse et patchable (tests) vers le pipeline de synthèse
+    corpus (Chantier 1b) : import différé pour ne pas alourdir le démarrage."""
+    from core.synthesize_corpus import synthesize_corpus
+    return synthesize_corpus(question, **kwargs)
+
+
 class AskBody(BaseModel):
     """Requête du chat : question + périmètre (un document, ou null = tous)
     + historique + options par requête (None = défaut .env) + mode de
@@ -66,7 +73,7 @@ class AskBody(BaseModel):
     parent_child: bool | None = None
     self_rag: bool | None = None
     system_prompt: str | None = None
-    mode: str = "auto"                # auto | rag | agent
+    mode: str = "auto"                # auto | rag | agent | synth
     session_id: str | None = None
 
 
@@ -179,14 +186,40 @@ def ask(body: AskBody) -> StreamingResponse:
                 except Exception:
                     session_id = None  # Mongo down : conversation éphémère
 
-            # Routage : Auto -> le routeur (sans LLM) décide ; sinon forcé.
-            if body.mode in ("rag", "agent"):
+            # Routage : Auto -> intention ; sinon forcé (rag/agent/synth).
+            if body.mode in ("rag", "agent", "synth"):
                 effective, reason = body.mode, f"mode {body.mode.upper()} forcé"
             else:
-                from core.router import route_query
-                d = route_query(body.question)
-                effective, reason = d["mode"], d["reason"]
+                from retrieval.intent import classify_intent
+                intent = classify_intent(body.question)
+                if intent == "aggregate":
+                    effective, reason = "synth", "synthèse corpus (agrégation détectée)"
+                else:
+                    from core.router import route_query
+                    d = route_query(body.question)
+                    effective, reason = d["mode"], d["reason"]
             yield _sse({"type": "route", "mode": effective, "reason": reason})
+
+            if effective == "synth":
+                answer_txt = ""
+                documents: list = []
+                for ev in _synthesize_corpus(body.question):
+                    t = ev.get("type")
+                    if t == "stage":
+                        yield _sse(ev)
+                    elif t == "map":
+                        yield _sse(ev)
+                    elif t == "token":
+                        answer_txt += ev["text"]
+                        yield _sse({"type": "token", "text": ev["text"]})
+                    elif t == "done":
+                        documents = ev["result"].get("documents", [])
+                        citations = [{"source": d} for d in documents]
+                        yield _sse({"type": "sources", "citations": citations})
+                        _persist_exchange(session_id, body.source, body.question,
+                                          answer_txt, citations, None, [])
+                        yield _sse({"type": "done", "found": bool(answer_txt)})
+                return
 
             if effective == "agent":
                 reasoning_parts: list[str] = []
