@@ -244,17 +244,27 @@ def get_config() -> Dict[str, Any]:
         "CROSS_ENCODER_LOCAL_PATH": cross_encoder_model,
         # Seuil hors-scope : le cross-encoder renvoie ~0.500 (neutre) pour le hors-sujet
         # et juste au-dessus pour l'in-domain. 0.505 les sépare (calibré).
-        "CE_RELEVANCE_THRESHOLD": float(os.environ.get("CE_RELEVANCE_THRESHOLD", "0.505")),
+        "CE_RELEVANCE_THRESHOLD": float(os.environ.get("CE_RELEVANCE_THRESHOLD", "0.48")),
     }
     
     # --------------------- RETRIEVAL & RANKING -------------------
     retrieval_config = {
         "NUM_CHUNKS": int(os.environ.get("NUM_CHUNKS", "15")),
         "RRF_K": int(os.environ.get("RRF_K", "60")),
-        "WEIGHT_SEMANTIC": float(os.environ.get("WEIGHT_SEMANTIC", "0.3")),
-        "WEIGHT_BM25": float(os.environ.get("WEIGHT_BM25", "0.7")),
+        "WEIGHT_SEMANTIC": float(os.environ.get("WEIGHT_SEMANTIC", "0.5")),
+        "WEIGHT_BM25": float(os.environ.get("WEIGHT_BM25", "0.5")),
         "MAX_CHUNK_LENGTH": int(os.environ.get("MAX_CHUNK_LENGTH", "25000")),
         "MAX_QUERY_CHARS": int(os.environ.get("MAX_QUERY_CHARS", "512")),
+        # Pool de candidats ÉLASTIQUE remonté par branche AVANT rerank : borne basse
+        # (petit corpus, rapide), incrément par document, borne haute (protège le
+        # coût du rerank sur gros corpus). pool = clamp(MIN, MIN + PER_DOC*n_docs, MAX).
+        "CANDIDATE_POOL_MIN": int(os.environ.get("CANDIDATE_POOL_MIN", "40")),
+        "CANDIDATE_POOL_MAX": int(os.environ.get("CANDIDATE_POOL_MAX", "120")),
+        "CANDIDATE_POOL_PER_DOC": int(os.environ.get("CANDIDATE_POOL_PER_DOC", "3")),
+        # Plancher de couverture : chunks min garantis par document pertinent (mode « Tous »).
+        "PER_DOC_FLOOR": int(os.environ.get("PER_DOC_FLOOR", "1")),
+        # Plafond du top-k final après plancher (protège le contexte de génération).
+        "MAX_CHUNKS": int(os.environ.get("MAX_CHUNKS", "24")),
     }
     
     # --------------------- CHUNKING & ENHANCEMENT -------------------
@@ -422,6 +432,11 @@ WEIGHT_SEMANTIC = CONFIG["WEIGHT_SEMANTIC"]
 WEIGHT_BM25 = CONFIG["WEIGHT_BM25"]
 MAX_CHUNK_LENGTH = CONFIG["MAX_CHUNK_LENGTH"]
 MAX_QUERY_CHARS = CONFIG["MAX_QUERY_CHARS"]
+CANDIDATE_POOL_MIN = CONFIG["CANDIDATE_POOL_MIN"]
+CANDIDATE_POOL_MAX = CONFIG["CANDIDATE_POOL_MAX"]
+CANDIDATE_POOL_PER_DOC = CONFIG["CANDIDATE_POOL_PER_DOC"]
+PER_DOC_FLOOR = CONFIG["PER_DOC_FLOOR"]
+MAX_CHUNKS = CONFIG["MAX_CHUNKS"]
 #N_EXPANSIONS = CONFIG["N_EXPANSIONS"]
 
 AUTO_KEYWORDS = CONFIG["AUTO_KEYWORDS"]
