@@ -128,6 +128,37 @@ def _ask_judge(llm, prompt: str, max_retries: int = 2) -> float:
     return 0.0
 
 
+def _call_llm(llm, prompt: str) -> str:
+    """Appelle un juge injecté : callable(prompt)->str OU objet avec .invoke."""
+    if llm is None:
+        llm = _get_judge_llm()
+    fn = llm if callable(llm) else llm.invoke
+    return fn(prompt) or ""
+
+
+_CLAIMS_PROMPT = """[TÂCHE] Décompose le TEXTE en affirmations ATOMIQUES (une idée vérifiable par ligne).
+- Une affirmation par ligne, préfixée « - ». Rien d'autre.
+- Fidèle au texte, sans invention, sans reformulation excessive.
+
+[TEXTE]
+{text}
+
+[AFFIRMATIONS]"""
+
+
+def decompose_claims(text: str, llm=None) -> list[str]:
+    """Extrait des affirmations atomiques d'un texte (LLM injectable)."""
+    if not (text or "").strip():
+        return []
+    raw = _call_llm(llm, _CLAIMS_PROMPT.format(text=text[:2000]))
+    items = []
+    for line in raw.splitlines():
+        s = line.strip().lstrip("-*•").strip()
+        if s:
+            items.append(s)
+    return items
+
+
 def faithfulness_llm(generated: str, chunks: list, llm=None) -> float:
     """Fidélité : la réponse est-elle entièrement fondée sur le contexte ? (0.0 = hallucination, 1.0 = fidèle)"""
     if not generated or not chunks:
