@@ -196,6 +196,8 @@ def faithfulness_ragas(generated: str, chunks: list, llm=None) -> float:
     claims = decompose_claims(generated, llm=llm)
     if not claims or not chunks:
         return 0.0
+    if llm is None:
+        llm = _get_judge_llm()
     ctx = _context_text(chunks)
     supported = sum(1 for c in claims if _judge_supported(c, ctx, llm))
     return supported / len(claims)
@@ -206,6 +208,8 @@ def context_recall_ragas(reference: str, chunks: list, llm=None) -> float:
     claims = decompose_claims(reference, llm=llm)
     if not claims or not chunks:
         return 0.0
+    if llm is None:
+        llm = _get_judge_llm()
     ctx = _context_text(chunks)
     attrib = sum(1 for c in claims if _judge_supported(c, ctx, llm))
     return attrib / len(claims)
