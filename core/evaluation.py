@@ -203,6 +203,43 @@ def faithfulness_ragas(generated: str, chunks: list, llm=None) -> float:
     return supported / len(claims)
 
 
+def _generate_questions(generated: str, n: int, llm) -> list[str]:
+    """Génère `n` questions auxquelles la réponse `generated` répondrait (LLM injectable)."""
+    prompt = f"""[TÂCHE] À partir de la RÉPONSE, génère {n} question(s) auxquelles elle répondrait. Une par ligne, préfixée « - ». Rien d'autre.
+
+[RÉPONSE]
+{generated[:1500]}
+
+[QUESTIONS]"""
+    raw = _call_llm(llm, prompt)
+    qs = [l.strip().lstrip("-*•").strip() for l in raw.splitlines() if l.strip()]
+    return qs[:n]
+
+
+def _cosine(a, b) -> float:
+    import numpy as np
+    va, vb = np.asarray(a, dtype=float), np.asarray(b, dtype=float)
+    na, nb = np.linalg.norm(va), np.linalg.norm(vb)
+    if na == 0 or nb == 0:
+        return 0.0
+    return float(va @ vb / (na * nb))
+
+
+def answer_relevancy_ragas(generated, question, llm=None, embed=None, n=3) -> float:
+    """Cosinus moyen entre la question d'origine et des questions générées depuis la réponse."""
+    if not (generated or "").strip():
+        return 0.0
+    if embed is None:
+        from nlp.ollama_embedding import OllamaEmbedding
+        embed = OllamaEmbedding().embed_query
+    gen_qs = _generate_questions(generated, n, llm)
+    if not gen_qs:
+        return 0.0
+    q_vec = embed(question)
+    sims = [_cosine(q_vec, embed(gq)) for gq in gen_qs]
+    return sum(sims) / len(sims)
+
+
 def context_recall_ragas(reference: str, chunks: list, llm=None) -> float:
     """Rappel de contexte par affirmations : affirmations de la RÉFÉRENCE attribuables au contexte récupéré / total."""
     claims = decompose_claims(reference, llm=llm)

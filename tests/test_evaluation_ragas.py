@@ -92,3 +92,18 @@ def test_context_precision_default_llm_uses_judge_helper(monkeypatch):
     val = E.context_precision_ragas("q", "ref", [{"doc": "c"}])   # llm defaults to None → must resolve
     assert val == 1.0
     assert called["judge"] is True
+
+
+def test_answer_relevancy_mean_cosine(monkeypatch):
+    from core import evaluation as E
+    # génère 2 questions ; embeddings factices : q0 identique à l'orig, q1 orthogonal.
+    monkeypatch.setattr(E, "_generate_questions", lambda gen, n, llm: ["q0", "q1"])
+    vecs = {"orig": [1.0, 0.0], "q0": [1.0, 0.0], "q1": [0.0, 1.0]}
+    val = E.answer_relevancy_ragas("rép", "orig", llm=object(),
+                                   embed=lambda s: vecs[s], n=2)
+    assert abs(val - 0.5) < 1e-6  # mean(cos=1, cos=0)
+
+
+def test_answer_relevancy_empty():
+    from core import evaluation as E
+    assert E.answer_relevancy_ragas("", "q", llm=lambda p: "", embed=lambda s: [1.0]) == 0.0
