@@ -110,6 +110,18 @@ def _run_attribution(question: str, answer_txt: str, chunks: list,
     return attribution
 
 
+def scope_arguments(source: str | None, arguments: dict) -> dict:
+    """Injecte le périmètre documentaire dans les arguments d'un outil agent.
+
+    Ajoute `document=source` UNIQUEMENT si `source` est non vide ET qu'aucun
+    `document` n'est déjà spécifié. Périmètre « Tous » (source falsy = None/"")
+    -> arguments inchangés : l'agent balaie tout le corpus et n'est jamais
+    « collé » au dernier document sélectionné."""
+    if source and isinstance(arguments, dict) and not arguments.get("document"):
+        return {**arguments, "document": source}
+    return arguments
+
+
 def _agent_events(question: str, source: str | None, history: list[dict]):
     """Mode Agent : traduit les événements du planificateur-exécuteur multi-hop en
     trames SSE (plan/étapes en direct = boîte de verre, puis réponse streamée).
@@ -120,9 +132,7 @@ def _agent_events(question: str, source: str | None, history: list[dict]):
 
     def _scoped_runner(name, arguments):
         # L'agent respecte le périmètre documentaire choisi dans le chat.
-        if source and isinstance(arguments, dict) and not arguments.get("document"):
-            arguments = {**arguments, "document": source}
-        return _rt(name, arguments)
+        return _rt(name, scope_arguments(source, arguments))
 
     trace: list[str] = []
     result: dict = {}
