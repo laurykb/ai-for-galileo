@@ -8,7 +8,10 @@ Périmètre : RAG direct **et** mode Agent (même socle de retrieval)
 
 AI_for_ssh_v3 est un RAG documentaire 100 % local (offline). Cible réelle
 confirmée : **jusqu'à 50 documents de 100–200 pages chacun** (soit
-≈ 5 000–10 000 pages, **≈ 15 000–22 000 chunks** à 1000 caractères/chunk).
+≈ 5 000–10 000 pages, **≈ 15 000–22 000 chunks** à 1000 caractères/chunk), en
+entrée **`.pdf` / `.docx` / `.xlsx`** (convertis en Markdown via Docling). Le
+socle doit être **élastique** : aussi bon sur un petit corpus (2–5 docs) que
+sur le plafond de 50, sans réglage manuel entre les deux.
 
 Deux besoins distincts coexistent, et **aucun** n'est correctement servi
 aujourd'hui :
@@ -85,10 +88,15 @@ routeur (Chantier 2).
 
 ### B. Retrieval pointu (Q&A) — approche A « plancher par document »
 
-1. **Pool de candidats élargi avant rerank.** Sémantique et BM25 remontent
-   chacun `CANDIDATE_POOL` (~60) candidats au lieu du top-k final, pour que les
-   chunks des petits documents entrent dans le set reranké.
-   Fichiers : `retrieval/vector_store.py` (n candidats sémantiques),
+1. **Pool de candidats élargi ET élastique avant rerank.** Sémantique et BM25
+   remontent chacun un pool large au lieu du top-k final, pour que les chunks
+   des petits documents entrent dans le set reranké. Le pool est **dérivé de la
+   taille réelle du corpus** (nb de documents, lu gratuitement dans le
+   `bm25_tuple`) : `pool = clamp(CANDIDATE_POOL_MIN, CANDIDATE_POOL_MIN +
+   CANDIDATE_POOL_PER_DOC · n_docs, CANDIDATE_POOL_MAX)`. Petit corpus → réduit
+   et rapide ; gros corpus (≤ 50 docs) → élargi mais plafonné pour borner le
+   coût du rerank. Aucune constante figée. Fichiers :
+   `retrieval/vector_store.py` (n candidats sémantiques),
    `indexing/keyword_index.py` (`bm25_search` topn), `retrieval/retrieve.py`.
 2. **Plancher par document.** Si `source_filter=None`, garantir ≥ `PER_DOC_FLOOR`
    (1) chunk par document **présent dans les candidats ET au-dessus d'un seuil
@@ -155,6 +163,13 @@ Informations (principe : tout nouveau skill agent doit y être expliqué).
 
 ### D. Ingestion & scaling
 
+0. **Entrées multi-format `.pdf` / `.docx` / `.xlsx`.** Les documents réels
+   arrivent dans ces formats. Le pipeline route déjà tout non-`.md` vers Docling
+   (`UPLOAD_TYPES` inclut pdf/docx/pptx/xlsx/html/md ; la version installée de
+   Docling supporte `DOCX`/`XLSX`). On **verrouille** le support (formats
+   autorisés explicites dans `preprocessing/pdf_to_markdown._get_converter`) et
+   on le **prouve** par un test offline (fichiers minimaux générés via
+   `python-docx`/`openpyxl`, déjà installés). Aucun nouveau service.
 1. **Rejet des chunks vides** (`page_content.strip()==""`) à la
    création/indexation, pour Chroma **et** BM25 (`core/ingest.py` en amont
    commun ; `indexing/embedding.py`, `indexing/keyword_index.build_bm25_index`).
@@ -170,7 +185,9 @@ Informations (principe : tout nouveau skill agent doit y être expliqué).
 
 | Variable | Défaut proposé | Rôle |
 |---|---|---|
-| `CANDIDATE_POOL` | 60 | Pool de candidats par branche avant rerank |
+| `CANDIDATE_POOL_MIN` | 40 | Pool minimum par branche (petit corpus, rapide) |
+| `CANDIDATE_POOL_MAX` | 120 | Pool plafond par branche (borne le coût rerank à 50 docs) |
+| `CANDIDATE_POOL_PER_DOC` | 3 | Incrément du pool par document (élasticité) |
 | `PER_DOC_FLOOR` | 1 | Chunks minimum par document pertinent (mode « Tous ») |
 | `MAX_CHUNKS` | 24 | Plafond du top-k adaptatif (Q&A) |
 | `WEIGHT_SEMANTIC` | 0.5 | (depuis 0.3) |
