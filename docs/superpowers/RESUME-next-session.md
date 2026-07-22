@@ -78,15 +78,22 @@ Détaillé dans `docs/superpowers/research/2026-07-22-rag-techniques-improvement
 7. **RAPTOR récursif complet** (aujourd'hui résumés plats par section) — nourrit
    aussi la synthèse corpus 1b.
 
-### Piste « renforcement agent » (brainstorm fait, à trier/exécuter)
-`docs/superpowers/research/2026-07-22-agent-techniques-triage.md` (issu des repos
-NirDiamant Agent_Memory_Techniques + GenAI_Agents, offline). Top candidats pour
-l'exhaustivité multi-doc : (1) retrieval MMR/diversité ; (2) **câbler les tools
-`list_sources`/`extract_from_document` déjà écrits** dans l'agent ; (3) dédup
-sémantique au REDUCE ; (4) **boucle de réflexion d'exhaustivité** (étendre
-`self_rag` au map-reduce, critère de couverture, retry borné) — comble le trou
-d'exhaustivité du use case nord ; (5) index d'entités = checklist. Exclus :
-plateformes mémoire (Mem0/Zep/Letta), agents web/cloud, multi-agent lourd.
+### Vague 3 — renforcement de l'agent (exhaustivité multi-doc) — brainstorm fait
+Source : `docs/superpowers/research/2026-07-22-agent-techniques-triage.md` (repos
+NirDiamant Agent_Memory_Techniques + GenAI_Agents, triés offline). Tâches, chacune
+mesurée RAGAS avant/après, dans l'ordre de valeur :
+1. **Boucle de réflexion d'exhaustivité** — étendre `core/self_rag.py` au
+   map-reduce (critère de couverture « tous les docs/catégories balayés ? »,
+   retry borné). *Levier n°1 du use case nord.* → context recall + answer relevancy.
+2. **Câbler `list_sources` + `extract_from_document`** (déjà écrits dans
+   `tools/corpus_tools.py`, pas branchés) dans l'agent/planner. → context recall + hit@k.
+3. **Retrieval MMR / diversité** — casse le top-k redondant, force la
+   représentation inter-documents. → context recall + hit@k.
+4. **Dédup sémantique au REDUCE** (avant fusion LLM, union des `[src:]`).
+   → faithfulness + context precision.
+5. **Index d'entités = checklist d'exhaustivité** (pré-passe cachée). → context recall.
+Exclus (documentés) : plateformes mémoire (Mem0/Zep/Graphiti/Letta), agents
+web/cloud (offline), frameworks multi-agents lourds, benchmarks mémoire.
 
 ### Ensuite
 - **Chantier 3** — génération PDF/DOCX à la demande (python-docx présent ; aucune
