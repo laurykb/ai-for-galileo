@@ -22,7 +22,10 @@ def prefilter_documents(aspect, retrieve=None, all_sources=None, topn=None, max_
     topn = topn or CORPUS_PREFILTER_TOPN
     max_docs = max_docs or CORPUS_MAX_DOCS
     if retrieve is None:
-        from core.ask import retrieve_only as retrieve
+        # `retrieve_wide` (breadth, sans plancher de couverture ni MAX_CHUNKS) -
+        # PAS `retrieve_only` (orienté génération, ~8-15 chunks) sur lequel un
+        # `[:topn]` serait un no-op qui masque les petits documents pertinents.
+        from core.ask import retrieve_wide as retrieve
     if all_sources is None:
         all_sources = list_indexed_sources()
 

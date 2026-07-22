@@ -9,23 +9,33 @@ from concurrent.futures import ThreadPoolExecutor
 _REDUCE_PROMPT = """[RÔLE] Tu SYNTHÉTISES en une réponse unique les éléments « {aspect} » extraits de plusieurs documents.
 
 [CONSIGNES]
-- Appuie-toi UNIQUEMENT sur les ÉLÉMENTS fournis (chacun étiqueté par son document). Zéro invention.
+- Appuie-toi UNIQUEMENT sur les ÉLÉMENTS fournis. Zéro invention.
+- Chaque élément porte une étiquette source inline `[src: nom_du_document]` -
+  NE L'INVENTE PAS et NE LA REFORMULE PAS : recopie-la VERBATIM, caractère pour
+  caractère (ne corrige ni l'orthographe, ni les tirets/underscores, ni l'extension).
 - DÉDUPLIQUE les éléments équivalents et REGROUPE-les par CATÉGORIE pertinente.
-- Pour chaque élément, cite entre parenthèses le(s) document(s) source(s).
+- Pour chaque élément dédupliqué/regroupé, CONSERVE et FUSIONNE les étiquettes
+  `[src: ...]` de tous les documents où il apparaît (ex : `[src: A.md, src: B.md]`).
+  N'écris jamais une citation qui ne provient pas d'une étiquette `[src: ...]` fournie.
 - Rédige dans la langue des documents. Factuel, structuré, exhaustif sur le matériau fourni.
 
 [ÉLÉMENTS EXTRAITS - aspect « {aspect} »]
 {material}
 
-[SYNTHÈSE CATÉGORISÉE de « {aspect} »]"""
+[SYNTHÈSE CATÉGORISÉE de « {aspect} », avec étiquettes [src: ...] préservées]"""
 
 
 def _format_material(extractions) -> str:
+    """Formate le matériau MAP pour le REDUCE : chaque item porte une étiquette
+    source INLINE et déterministe `[src: {document}]` (dérivée de `ex["document"]`,
+    jamais du LLM) - le REDUCE n'a plus qu'à la recopier verbatim au lieu de citer
+    un nom de document de mémoire (source d'hallucinations/déformations)."""
     blocks = []
     for ex in extractions:
         if ex and ex.get("items"):
-            lines = "\n".join(f"- {it}" for it in ex["items"])
-            blocks.append(f"### {ex['document']}\n{lines}")
+            document = ex["document"]
+            lines = "\n".join(f"- {it}  [src: {document}]" for it in ex["items"])
+            blocks.append(f"### {document}\n{lines}")
     return "\n\n".join(blocks)
 
 

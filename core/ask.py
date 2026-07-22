@@ -294,6 +294,72 @@ def process_query_stream(user_q: str, system_prompt=None, source_filter: str = N
     return token_gen, final_chunks, citations
 
 
+def retrieve_wide(query: str, source_filter: str = None, topn: int = None):
+    """
+    Retrieval LARGE, orienté BREADTH pour le pré-filtre corpus-large (voir
+    `core.corpus.prefilter_documents`) — À NE PAS confondre avec `retrieve_only` /
+    `_prepare_retrieval` (orientés génération) qui appliquent un plancher de
+    couverture ET un plafond `MAX_CHUNKS` : sur un retrieval de génération, la
+    liste finale ne fait que ~8-15 chunks, dominés par le(s) plus gros document(s)
+    du corpus - un `[:topn]` dessus est un no-op qui ne laisse jamais entrer les
+    petits documents pourtant topiquement pertinents. Ici, PAS de plancher de
+    couverture, PAS de MAX_CHUNKS, rerank désactivé : on veut un maximum de
+    documents distincts représentés, pas la meilleure réponse à une question.
+
+    Retourne (query, chunks) où chunks est une liste de dicts
+    `{"doc": str, "meta": {..., "source": str}}`, dédupliqués par id, limitée à
+    `topn` éléments (défaut `CORPUS_PREFILTER_TOPN`). Défensif : n'utilise que
+    ce qui est disponible (BM25 et/ou sémantique) et ne lève JAMAIS - retourne
+    (query, []) en cas d'échec total.
+    """
+    from env_config import CORPUS_PREFILTER_TOPN
+    from indexing.keyword_index import bm25_search
+    from retrieval.semantic_search import run_semantic_for_query
+
+    topn = topn or CORPUS_PREFILTER_TOPN
+    chunks: list = []
+    seen_ids: set = set()
+
+    def _add(_id, doc, meta) -> None:
+        if _id is not None:
+            if _id in seen_ids:
+                return
+            seen_ids.add(_id)
+        chunks.append({"doc": doc, "meta": meta or {}})
+
+    # -- BM25 (large, tout le corpus) ------------------------------------------
+    try:
+        bm25_tuple = _load_bm25(None)
+    except Exception as e:
+        logger.warning("[retrieve_wide] Chargement BM25 impossible : %s", e)
+        bm25_tuple = None
+    if bm25_tuple:
+        try:
+            bm25_index, ids, texts, metas = bm25_tuple
+            res = bm25_search(bm25_index, ids, texts, metas, query, topn=topn, source_filter=source_filter)
+            r_ids = (res.get("ids") or [[]])[0]
+            r_docs = (res.get("documents") or [[]])[0]
+            r_metas = (res.get("metadatas") or [[]])[0]
+            for i, _id in enumerate(r_ids):
+                doc = r_docs[i] if i < len(r_docs) else None
+                meta = r_metas[i] if i < len(r_metas) else None
+                _add(_id, doc, meta)
+        except Exception as e:
+            logger.warning("[retrieve_wide] Recherche BM25 en échec : %s", e)
+
+    # -- Sémantique (large, tout le corpus) ------------------------------------
+    try:
+        store = _get_vector_store()
+        s_ids, s_lookup = run_semantic_for_query(store, query, topn=topn, source_filter=source_filter)
+        for _id in s_ids:
+            payload = s_lookup.get(_id) or {}
+            _add(_id, payload.get("doc"), payload.get("meta"))
+    except Exception as e:
+        logger.warning("[retrieve_wide] Recherche sémantique en échec : %s", e)
+
+    return query, chunks[:topn]
+
+
 def retrieve_only(user_q: str, source_filter: str = None,
                   conversation_history: list = None,
                   parent_child_on: bool = None):

@@ -9,7 +9,11 @@ def test_pipeline_emits_glassbox_events_and_reduces(monkeypatch):
     def extract(document, aspect):
         data = {"a.md": ["Déni de service", "Rejeu"], "b.md": ["Injection SQL", "Rejeu"]}
         return {"document": document, "items": data[document], "raw": ""}
-    reduce_llm = lambda prompt: "**Réseau**\n- Déni de service (a.md)\n- Rejeu (a.md, b.md)\n**Applicatif**\n- Injection SQL (b.md)"
+    captured_prompts = []
+    def reduce_llm(prompt):
+        captured_prompts.append(prompt)
+        return ("**Réseau**\n- Déni de service [src: a.md]\n- Rejeu [src: a.md, src: b.md]\n"
+                "**Applicatif**\n- Injection SQL [src: b.md]")
 
     events = list(synthesize_corpus("catégorise les attaques", aspect="attaques",
                                     llm=reduce_llm, prefilter=prefilter, extract=extract))
@@ -23,6 +27,19 @@ def test_pipeline_emits_glassbox_events_and_reduces(monkeypatch):
     assert done["type"] == "done"
     assert set(done["result"]["documents"]) == {"a.md", "b.md"}
     assert "Injection SQL" in done["result"]["answer"]
+
+    # -- Fix B : attribution inline déterministe dans le matériau REDUCE -------
+    # Chaque item du matériau porte son étiquette source verbatim (dérivée de
+    # ex["document"], jamais du LLM) - la reformulation en (a.md) est interdite.
+    assert len(captured_prompts) == 1
+    material = captured_prompts[0]
+    assert "Déni de service  [src: a.md]" in material
+    assert "Rejeu  [src: a.md]" in material
+    assert "Injection SQL  [src: b.md]" in material
+    assert "Rejeu  [src: b.md]" in material
+    # La synthèse finale préserve bien les étiquettes (pas de citation inventée).
+    assert "[src: a.md]" in done["result"]["answer"]
+    assert "[src: b.md]" in done["result"]["answer"]
 
 
 def test_pipeline_no_relevant_docs(monkeypatch):
