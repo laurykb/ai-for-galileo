@@ -395,12 +395,10 @@ export function Chat() {
       const ok = jobs.filter((j) => j.status === "success");
       const failed = jobs.filter((j) => j.status === "error");
       if (ok.length) {
+        // L'ingestion n'impose PAS le périmètre : on rafraîchit la liste des
+        // documents, mais on laisse le périmètre courant (« Tous » par défaut)
+        // pour que l'utilisateur ne reste jamais « collé » au dernier document.
         refreshDocs();
-        // Le prompt suivant porte sur LE document ajouté (source réelle) —
-        // seulement si le lot n'en contient qu'un (sinon : tous les documents).
-        if (ok.length === 1 && !failed.length) {
-          setSelected(ok[0].source_name ?? ok[0].name);
-        }
       }
       if (failed.length) {
         setAttachError(failed
