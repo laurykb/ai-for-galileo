@@ -13,6 +13,7 @@ import { ExpertToggle, useExpert } from "@/components/expert-toggle";
 const RAG_LINKS = [
   { href: "/rag", label: "Chat" },
   { href: "/documents", label: "Documents" },
+  { href: "/informations", label: "Informations" },
 ];
 const RAG_EXPERT = [{ href: "/observability", label: "Observabilité" }];
 const RAG_TAIL = [{ href: "/settings", label: "Paramètres" }];
