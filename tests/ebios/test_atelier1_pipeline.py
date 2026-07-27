@@ -253,7 +253,8 @@ def _merge_llm_group_1_2(prompt, format=None):
     return json.dumps({"groupes": [[1, 2]]}, ensure_ascii=False)
 
 
-def test_fusion_semantique_vm_fusionne_doublons_multidoc():
+def test_fusion_semantique_vm_fusionne_doublons_multidoc(monkeypatch):
+    monkeypatch.setattr(atelier1_module, "_semantic_merge_enabled", lambda: True)
     stages = []
     study = generate_atelier1("p-1", ["doc-a.md", "doc-b.md"],
                               llm=_llm_extract_vm_dup, gather=_gather_merge_ab,
@@ -271,7 +272,9 @@ def test_fusion_semantique_vm_fusionne_doublons_multidoc():
     assert ("fusion", {"categorie": "vm"}) in stages
 
 
-def test_fusion_groupe_indices_hors_limites_ignore():
+def test_fusion_groupe_indices_hors_limites_ignore(monkeypatch):
+    monkeypatch.setattr(atelier1_module, "_semantic_merge_enabled", lambda: True)
+
     def merge_out_of_range(prompt, format=None):
         return json.dumps({"groupes": [[1, 99]]}, ensure_ascii=False)
 
@@ -284,7 +287,9 @@ def test_fusion_groupe_indices_hors_limites_ignore():
     assert any("fusion sémantique" in w.lower() for w in study["warnings"])
 
 
-def test_fusion_groupe_chevauchant_ignore():
+def test_fusion_groupe_chevauchant_ignore(monkeypatch):
+    monkeypatch.setattr(atelier1_module, "_semantic_merge_enabled", lambda: True)
+
     def merge_overlap(prompt, format=None):
         return json.dumps({"groupes": [[1, 2], [2, 3]]}, ensure_ascii=False)
 
@@ -346,7 +351,8 @@ def _merge_llm_vm_none_er_group12(prompt, format=None):
     return json.dumps({"groupes": []}, ensure_ascii=False)
 
 
-def test_er_meme_valeur_metier_fusionne():
+def test_er_meme_valeur_metier_fusionne(monkeypatch):
+    monkeypatch.setattr(atelier1_module, "_semantic_merge_enabled", lambda: True)
     study = generate_atelier1("p-1", ["doc-a.md"], llm=_llm_2vm_same_vm_er,
                               gather=lambda d: _CHUNKS_2VM,
                               merge_llm=_merge_llm_vm_none_er_group12)
@@ -357,7 +363,8 @@ def test_er_meme_valeur_metier_fusionne():
     assert any("fusion sémantique" in w.lower() for w in study["warnings"])
 
 
-def test_er_inter_vm_refuse():
+def test_er_inter_vm_refuse(monkeypatch):
+    monkeypatch.setattr(atelier1_module, "_semantic_merge_enabled", lambda: True)
     study = generate_atelier1("p-1", ["doc-a.md"], llm=_llm_2vm_cross_vm_er,
                               gather=lambda d: _CHUNKS_2VM,
                               merge_llm=_merge_llm_vm_none_er_group12)
@@ -368,7 +375,9 @@ def test_er_inter_vm_refuse():
     assert "fusion sémantique" in warns
 
 
-def test_fusion_json_illisible_isole_categorie_inchangee():
+def test_fusion_json_illisible_isole_categorie_inchangee(monkeypatch):
+    monkeypatch.setattr(atelier1_module, "_semantic_merge_enabled", lambda: True)
+
     def llm_2vm(prompt, format=None):
         p = prompt.lower()
         if "valeurs métier" in p:

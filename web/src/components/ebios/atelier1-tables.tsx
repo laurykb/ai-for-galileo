@@ -52,7 +52,7 @@ export function Atelier1Tables({ a1, onChange, disabled }: Props) {
     <div className="space-y-6">
       <Panel>
         <PanelTitle kicker="Atelier 1" title="Missions et valeurs métier"
-          hint="Mission, valeurs métier (5 max) et biens supports (11 max) du classeur contractuel." />
+          hint="Mission, valeurs métier et biens supports — le classeur s'étend automatiquement à l'export." />
         <label className="mt-2 block text-xs text-fg-muted">Mission</label>
         <textarea className={cell} rows={2} value={a1.mission} disabled={disabled}
           onChange={(e) => patch({ mission: e.target.value })} />
@@ -147,7 +147,7 @@ export function Atelier1Tables({ a1, onChange, disabled }: Props) {
 
       <Panel>
         <PanelTitle kicker="Atelier 1" title="Événements redoutés"
-          hint="7 lignes maximum ; gravité sur l'échelle 1 Mineure → 4 Critique." />
+          hint="Gravité sur l'échelle 1 Mineure → 4 Critique ; le classeur s'étend automatiquement à l'export." />
         <div className="mt-2 space-y-3">
           {a1.evenements_redoutes.map((er, i) => (
             <div key={er.id} className="rounded border border-edge p-2">
@@ -190,7 +190,7 @@ export function Atelier1Tables({ a1, onChange, disabled }: Props) {
 
       <Panel>
         <PanelTitle kicker="Atelier 1" title="Socle de sécurité (GAP)"
-          hint="3 référentiels maximum ; écarts par bloc : 2, 2 puis 1 (structure du classeur)." />
+          hint="Référentiels et écarts en nombre libre — le classeur s'étend automatiquement à l'export." />
         <div className="mt-2 space-y-3">
           {a1.socle_securite.map((gap, i) => (
             <div key={gap.id} className="rounded border border-edge p-2">

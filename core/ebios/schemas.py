@@ -15,10 +15,6 @@ class _StrictModel(BaseModel):
 
 GRAVITE_LABELS = {1: "Mineure", 2: "Significative", 3: "Grave", 4: "Critique"}
 
-# Capacités du classeur contractuel (fusions réelles vérifiées le 2026-07-27).
-CAPACITES = {"valeurs_metier": 5, "biens_supports": 11, "evenements_redoutes": 7, "socle_securite": 3}
-GAP_ECART_CAPACITES = [2, 2, 1]  # ancres D3,D4 | D5,D7 | D8
-
 
 class NatureVM(str, Enum):
     processus = "processus"
@@ -122,28 +118,6 @@ def check_references(study: EbiosStudy) -> List[str]:
     return errs
 
 
-def check_capacity(a1: Atelier1) -> List[str]:
-    """Dépassements des capacités du classeur (bloquants pour l'export, jamais tronqués)."""
-    errs: List[str] = []
-    counts = {
-        "valeurs métier": (len(a1.valeurs_metier), CAPACITES["valeurs_metier"]),
-        "biens supports": (len(a1.biens_supports), CAPACITES["biens_supports"]),
-        "événements redoutés": (len(a1.evenements_redoutes), CAPACITES["evenements_redoutes"]),
-        "référentiels": (len(a1.socle_securite), CAPACITES["socle_securite"]),
-    }
-    for label, (n, cap) in counts.items():
-        if n > cap:
-            errs.append(f"Capacité dépassée : {n} {label} pour {cap} emplacements dans le classeur")
-    for i, gap in enumerate(a1.socle_securite[: len(GAP_ECART_CAPACITES)]):
-        cap = GAP_ECART_CAPACITES[i]
-        if len(gap.ecarts) > cap:
-            errs.append(
-                f"Capacité dépassée : {len(gap.ecarts)} écarts pour le référentiel "
-                f"« {gap.nom_referentiel} » (bloc {i + 1} : {cap} max)"
-            )
-    return errs
-
-
 def bounded_control(study: EbiosStudy) -> List[str]:
     """Contrôle borné : signale, n'invente ni ne régénère jamais."""
     warns: List[str] = []
@@ -165,5 +139,4 @@ def bounded_control(study: EbiosStudy) -> List[str]:
         for ec in gap.ecarts:
             if not ec.preuves:
                 warns.append(f"Écart « {ec.description[:60]} » sans preuve")
-    warns.extend(check_capacity(a1))
     return warns

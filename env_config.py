@@ -398,7 +398,7 @@ def get_config() -> Dict[str, Any]:
         # (rôle `synthesize` PROPOSE des regroupements, l'application reste
         # déterministe côté code, chaque fusion tracée en warning). Désactivable :
         # ne garde alors que la dédup exacte par dénomination.
-        "EBIOS_SEMANTIC_MERGE": os.environ.get("EBIOS_SEMANTIC_MERGE", "true").lower()
+        "EBIOS_SEMANTIC_MERGE": os.environ.get("EBIOS_SEMANTIC_MERGE", "false").lower()
                                 in ("true", "1", "yes"),
     }
 

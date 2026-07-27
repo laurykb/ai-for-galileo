@@ -27,7 +27,7 @@ def _semantic_merge_enabled() -> bool:
         from env_config import EBIOS_SEMANTIC_MERGE
         return EBIOS_SEMANTIC_MERGE
     except ImportError:
-        return True
+        return False
 
 
 _DOMAINS = (

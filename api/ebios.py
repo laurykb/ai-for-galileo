@@ -123,7 +123,7 @@ def _safe_name(name: str) -> str:
 
 @router.post("/api/ebios/projects/{project_id}/atelier-1/exports")
 def export_atelier(project_id: str, body: ExportBody):
-    from core.ebios.exporters.xlsx import ExportCapacityError, TemplateIntegrityError, export_xlsx
+    from core.ebios.exporters.xlsx import TemplateIntegrityError, export_xlsx
     repo = _repo()
     proj = _get_project_or_404(repo, project_id)
     if body.format in ("docx", "pdf"):
@@ -141,8 +141,6 @@ def export_atelier(project_id: str, body: ExportBody):
     out = tmp_dir / filename
     try:
         export_xlsx(latest["study"], out)
-    except ExportCapacityError as e:
-        raise HTTPException(422, f"Capacité du classeur dépassée : {e}")
     except TemplateIntegrityError as e:
         raise HTTPException(500, str(e))
     repo.mark_exported(project_id, body.format)

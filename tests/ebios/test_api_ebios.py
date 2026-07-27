@@ -80,6 +80,23 @@ def test_validation_puis_export_xlsx(client, tmp_path):
     assert r.content[:2] == b"PK"
 
 
+def test_export_etude_54_vm_reussit(client):
+    """Le classeur s'étend automatiquement : plus de refus de capacité côté API."""
+    data = make_study()
+    vm = data["atelier_1"]["valeurs_metier"][0]
+    data["atelier_1"]["valeurs_metier"] = [dict(vm, id=f"vm-{i}") for i in range(1, 55)]
+    p = _project(client)
+    client.put(f"/api/ebios/projects/{p['project_id']}/atelier-1",
+               json={"study": data, "expected_version": 0, "author": "ingénieur"})
+    r = client.post(f"/api/ebios/projects/{p['project_id']}/atelier-1/validate",
+                    json={"expected_version": 1, "validated_by": "Laury"})
+    assert r.status_code == 200
+    r = client.post(f"/api/ebios/projects/{p['project_id']}/atelier-1/exports",
+                    json={"format": "xlsx"})
+    assert r.status_code == 200
+    assert r.content[:2] == b"PK"
+
+
 def test_export_refuse_avant_validation(client):
     p = _project(client)
     client.put(f"/api/ebios/projects/{p['project_id']}/atelier-1",
