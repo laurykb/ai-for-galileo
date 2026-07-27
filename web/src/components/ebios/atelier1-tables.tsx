@@ -29,6 +29,25 @@ export function Atelier1Tables({ a1, onChange, disabled }: Props) {
   const vmName = (id: string) =>
     a1.valeurs_metier.find((v) => v.id === id)?.denomination ?? id;
 
+  const deleteVm = (id: string) => patch({
+    valeurs_metier: a1.valeurs_metier.filter((v) => v.id !== id),
+    biens_supports: a1.biens_supports.map((b) => ({
+      ...b,
+      valeurs_metier_associees: b.valeurs_metier_associees.filter((vid) => vid !== id),
+    })),
+    evenements_redoutes: a1.evenements_redoutes.map((x) => x.valeur_metier_id === id
+      ? { ...x, valeur_metier_id: "" } : x),
+  });
+  const deleteBs = (id: string) => patch({
+    biens_supports: a1.biens_supports.filter((b) => b.id !== id) });
+  const deleteEr = (id: string) => patch({
+    evenements_redoutes: a1.evenements_redoutes.filter((x) => x.id !== id) });
+  const deleteGap = (id: string) => patch({
+    socle_securite: a1.socle_securite.filter((g) => g.id !== id) });
+  const deleteEcart = (gapId: string, k: number) => patch({
+    socle_securite: a1.socle_securite.map((g) => g.id === gapId
+      ? { ...g, ecarts: g.ecarts.filter((_, m) => m !== k) } : g) });
+
   return (
     <div className="space-y-6">
       <Panel>
@@ -72,6 +91,12 @@ export function Atelier1Tables({ a1, onChange, disabled }: Props) {
                   </select>
                 </div>
               </div>
+              <div className="mt-2 flex justify-end">
+                <button className="rounded border border-edge px-2 py-1 text-xs" disabled={disabled}
+                  onClick={() => deleteVm(vm.id)}>
+                  Supprimer
+                </button>
+              </div>
               <Preuves preuves={vm.preuves} />
             </div>
           ))}
@@ -107,6 +132,12 @@ export function Atelier1Tables({ a1, onChange, disabled }: Props) {
                 <p className="self-center text-xs text-fg-muted">
                   VM : {bs.valeurs_metier_associees.map(vmName).join(", ") || "aucune"}
                 </p>
+              </div>
+              <div className="mt-2 flex justify-end">
+                <button className="rounded border border-edge px-2 py-1 text-xs" disabled={disabled}
+                  onClick={() => deleteBs(bs.id)}>
+                  Supprimer
+                </button>
               </div>
               <Preuves preuves={bs.preuves} />
             </div>
@@ -144,6 +175,12 @@ export function Atelier1Tables({ a1, onChange, disabled }: Props) {
                     <option key={g} value={g}>{g} — {GRAVITE_LABELS[g]}</option>
                   ))}
                 </select>
+              </div>
+              <div className="mt-2 flex justify-end">
+                <button className="rounded border border-edge px-2 py-1 text-xs" disabled={disabled}
+                  onClick={() => deleteEr(er.id)}>
+                  Supprimer
+                </button>
               </div>
               <Preuves preuves={er.preuves} />
             </div>
@@ -185,8 +222,20 @@ export function Atelier1Tables({ a1, onChange, disabled }: Props) {
                       (g, j) => j === i ? { ...g, ecarts: g.ecarts.map(
                         (x, m) => m === k ? { ...x, justification: e.target.value } : x) } : g) })} />
                   <Preuves preuves={ec.preuves} />
+                  <div className="flex justify-end">
+                    <button className="rounded border border-edge px-2 py-1 text-xs" disabled={disabled}
+                      onClick={() => deleteEcart(gap.id, k)}>
+                      Supprimer l&apos;écart
+                    </button>
+                  </div>
                 </div>
               ))}
+              <div className="mt-2 flex justify-end">
+                <button className="rounded border border-edge px-2 py-1 text-xs" disabled={disabled}
+                  onClick={() => deleteGap(gap.id)}>
+                  Supprimer le référentiel
+                </button>
+              </div>
             </div>
           ))}
         </div>

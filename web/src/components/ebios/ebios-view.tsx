@@ -230,6 +230,7 @@ export function EbiosView() {
                     L&apos;export est activé après validation explicite de l&apos;ingénieur.
                   </p>
                 )}
+                {error && <Banner tone="bad">{error}</Banner>}
               </Panel>
             </>
           )}
