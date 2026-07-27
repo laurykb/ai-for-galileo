@@ -1,16 +1,21 @@
 """Endpoints EBIOS RM — Atelier 1 : dossiers, brouillons versionnés, validation, exports."""
 from __future__ import annotations
 
+import json
+import queue
 import re
 import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
+
+from api.common import _sse
 
 router = APIRouter()
 
@@ -139,3 +144,60 @@ def export_atelier(project_id: str, body: ExportBody):
 
     return FileResponse(out, media_type=_XLSX_MIME, filename=filename,
                         background=BackgroundTask(_cleanup))
+
+
+def _generate():
+    from core.ebios.atelier1 import generate_atelier1
+    return generate_atelier1
+
+
+@router.post("/api/ebios/projects/{project_id}/atelier-1/generate")
+def generate(project_id: str):
+    repo = _repo()
+    proj = _get_project_or_404(repo, project_id)
+    generate_fn = _generate()
+
+    def gen():
+        docs = proj.get("document_ids") or []
+        if not docs:
+            yield _sse({"type": "error", "message": "Aucun document sélectionné"})
+            return
+        events: "queue.Queue" = queue.Queue()
+        result: dict = {}
+
+        def worker():
+            try:
+                result["study"] = generate_fn(
+                    project_id, docs,
+                    progress=lambda stage, detail=None: events.put(
+                        {"type": "stage", "stage": stage, **(detail or {})}),
+                )
+            except Exception as e:  # noqa: BLE001 — remonté au flux SSE
+                result["error"] = str(e)
+            finally:
+                events.put(None)
+
+        t = threading.Thread(target=worker, daemon=True)
+        t.start()
+        while True:
+            ev = events.get()
+            if ev is None:
+                break
+            yield _sse(ev)
+        t.join()
+        if "error" in result:
+            yield _sse({"type": "error", "message": result["error"]})
+            return
+        try:
+            version = repo.save_version(project_id, result["study"], origin="generation",
+                                        author="pipeline", expected_version=None)
+        except ValueError as e:
+            yield _sse({"type": "error", "message": f"Brouillon invalide : {e}"})
+            return
+        yield _sse({"type": "draft", "version": version["version"],
+                    "study": result["study"],
+                    "warnings": result["study"].get("warnings", [])})
+        yield _sse({"type": "done"})
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-store"})

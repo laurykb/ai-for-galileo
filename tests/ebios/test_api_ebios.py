@@ -88,3 +88,43 @@ def test_docx_pdf_explicitement_indisponibles(client):
 
 def test_projet_inconnu_404(client):
     assert client.get("/api/ebios/projects/nope").status_code == 404
+
+
+def _events(text):
+    import json as _json
+    out = []
+    for line in text.splitlines():
+        if line.startswith("data: "):
+            out.append(_json.loads(line[len("data: "):]))
+    return out
+
+
+def test_generate_sse_stream_et_persistance(client, monkeypatch):
+    from tests.ebios.fixtures import make_study as _mk
+
+    def fake_generate(project_id, document_ids, progress=None, **kw):
+        progress("extraction", {"document": document_ids[0], "domaine": "vm"})
+        progress("consolidation", {})
+        progress("validation", {})
+        return _mk(project_id=project_id)
+
+    monkeypatch.setattr(ebios_api, "_generate", lambda: fake_generate)
+    p = _project(client)
+    r = client.post(f"/api/ebios/projects/{p['project_id']}/atelier-1/generate")
+    assert r.status_code == 200
+    events = _events(r.text)
+    types = [e["type"] for e in events]
+    assert types.count("stage") == 3 and "draft" in types and types[-1] == "done"
+    draft = next(e for e in events if e["type"] == "draft")
+    assert draft["version"] == 1
+    detail = client.get(f"/api/ebios/projects/{p['project_id']}").json()
+    assert detail["project"]["status"] == "draft_generated"
+    assert detail["latest"]["origin"] == "generation"
+
+
+def test_generate_sans_document_erreur(client, monkeypatch):
+    monkeypatch.setattr(ebios_api, "_generate", lambda: (lambda *a, **k: {}))
+    p = _project(client, docs=())
+    r = client.post(f"/api/ebios/projects/{p['project_id']}/atelier-1/generate")
+    events = _events(r.text)
+    assert events[-1]["type"] == "error"
