@@ -37,11 +37,13 @@ from api.rag import router as rag_router        # noqa: E402
 from api.sessions import router as sessions_router  # noqa: E402
 from api.documents import router as documents_router  # noqa: E402
 from api.system import router as system_router  # noqa: E402
+from api.ebios import router as ebios_router  # noqa: E402
 
 app.include_router(rag_router)
 app.include_router(sessions_router)
 app.include_router(documents_router)
 app.include_router(system_router)
+app.include_router(ebios_router)
 
 
 def _port_open(port: int, host: str = "127.0.0.1") -> bool:
