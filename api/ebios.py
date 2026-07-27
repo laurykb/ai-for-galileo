@@ -47,6 +47,10 @@ class ExportBody(BaseModel):
     format: str  # xlsx | docx | pdf
 
 
+class PutDocumentsBody(BaseModel):
+    document_ids: List[str]
+
+
 def _get_project_or_404(repo, project_id: str) -> dict:
     proj = repo.get_project(project_id)
     if not proj:
@@ -76,6 +80,13 @@ def get_project(project_id: str):
     if latest:
         warnings = bounded_control(EbiosStudy.model_validate(latest["study"]))
     return {"project": proj, "latest": latest, "warnings": warnings}
+
+
+@router.put("/api/ebios/projects/{project_id}/documents")
+def put_documents(project_id: str, body: PutDocumentsBody):
+    repo = _repo()
+    _get_project_or_404(repo, project_id)
+    return repo.update_documents(project_id, body.document_ids)
 
 
 @router.put("/api/ebios/projects/{project_id}/atelier-1")

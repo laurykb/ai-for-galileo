@@ -128,3 +128,28 @@ def test_generate_sans_document_erreur(client, monkeypatch):
     r = client.post(f"/api/ebios/projects/{p['project_id']}/atelier-1/generate")
     events = _events(r.text)
     assert events[-1]["type"] == "error"
+
+
+def test_put_documents_puis_regeneration(client, monkeypatch):
+    received = {}
+
+    def fake_generate(project_id, document_ids, progress=None, **kw):
+        received["docs"] = list(document_ids)
+        progress("extraction", {})
+        from tests.ebios.fixtures import make_study as _mk
+        return _mk(project_id=project_id)
+
+    monkeypatch.setattr(ebios_api, "_generate", lambda: fake_generate)
+    p = _project(client, docs=("doc-a.md",))
+    r = client.put(f"/api/ebios/projects/{p['project_id']}/documents",
+                   json={"document_ids": ["doc-a.md", "doc-b.md"]})
+    assert r.status_code == 200 and r.json()["document_ids"] == ["doc-a.md", "doc-b.md"]
+    detail = client.get(f"/api/ebios/projects/{p['project_id']}").json()
+    assert detail["project"]["document_ids"] == ["doc-a.md", "doc-b.md"]
+    client.post(f"/api/ebios/projects/{p['project_id']}/atelier-1/generate")
+    assert received["docs"] == ["doc-a.md", "doc-b.md"]
+
+
+def test_put_documents_projet_inconnu_404(client):
+    r = client.put("/api/ebios/projects/nope/documents", json={"document_ids": []})
+    assert r.status_code == 404
