@@ -31,6 +31,7 @@ app.add_middleware(
     allow_origins=[o.strip() for o in _ORIGINS.split(",") if o.strip()],
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Content-Disposition"],
 )
 
 from api.rag import router as rag_router        # noqa: E402

@@ -153,3 +153,11 @@ def test_put_documents_puis_regeneration(client, monkeypatch):
 def test_put_documents_projet_inconnu_404(client):
     r = client.put("/api/ebios/projects/nope/documents", json={"document_ids": []})
     assert r.status_code == 404
+
+
+def test_cors_expose_content_disposition():
+    from starlette.middleware.cors import CORSMiddleware
+    from api.main import app as main_app
+    m = next(m for m in main_app.user_middleware if m.cls is CORSMiddleware)
+    exposed = m.kwargs.get("expose_headers") or []
+    assert "Content-Disposition" in exposed

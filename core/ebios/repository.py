@@ -72,6 +72,13 @@ class EbiosRepository:
 
     def save_version(self, project_id: str, study: dict, origin: str, author: str,
                      expected_version: Optional[int], status: Optional[str] = None) -> dict:
+        if origin == "manual_edit":
+            # Une édition manuelle révoque toujours une validation précédente :
+            # le front peut renvoyer le study tel quel (validated_at hérité de
+            # la version validée) — l'export ne doit rester possible qu'après
+            # une nouvelle validation explicite.
+            study = dict(study)
+            study["validated_at"] = None
         EbiosStudy.model_validate(study)  # snapshot toujours conforme au schéma
         latest = self.latest_version(project_id)
         current = latest["version"] if latest else 0
