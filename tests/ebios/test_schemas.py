@@ -60,3 +60,14 @@ def test_bounded_control_signale_preuves_manquantes():
     data["atelier_1"]["valeurs_metier"][0]["preuves"] = []
     warns = bounded_control(EbiosStudy.model_validate(data))
     assert any("preuve" in w.lower() for w in warns)
+
+
+def test_champ_inconnu_rejete():
+    """Les champs inconnus dans les modèles pydantic doivent lever ValidationError."""
+    data = make_study()
+    # Ajoute un champ inconnu au niveau des valeurs métier
+    data["atelier_1"]["valeurs_metier"][0]["champ_inconnu"] = "x"
+    # Ajoute un champ inconnu au niveau top-level
+    data["inconnu"] = 1
+    with pytest.raises(ValidationError):
+        EbiosStudy.model_validate(data)

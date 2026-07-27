@@ -4,9 +4,14 @@ from __future__ import annotations
 from enum import Enum
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 SCHEMA_VERSION = "1.0"
+
+
+class _StrictModel(BaseModel):
+    """Modèle de base strict : rejette les champs inconnus (extra="forbid")."""
+    model_config = ConfigDict(extra="forbid")
 
 GRAVITE_LABELS = {1: "Mineure", 2: "Significative", 3: "Grave", 4: "Critique"}
 
@@ -31,19 +36,19 @@ class EtatApplication(str, Enum):
     non_applique = "Non appliqué"
 
 
-class Preuve(BaseModel):
+class Preuve(_StrictModel):
     document_id: str
     source: str
     page: Optional[int] = None
     extrait: str
 
 
-class Responsable(BaseModel):
+class Responsable(_StrictModel):
     nom: str
     type: TypeResponsable
 
 
-class ValeurMetier(BaseModel):
+class ValeurMetier(_StrictModel):
     id: str
     denomination: str
     nature: NatureVM
@@ -52,7 +57,7 @@ class ValeurMetier(BaseModel):
     preuves: List[Preuve] = Field(default_factory=list)
 
 
-class BienSupport(BaseModel):
+class BienSupport(_StrictModel):
     id: str
     denomination: str
     description: str = ""
@@ -61,7 +66,7 @@ class BienSupport(BaseModel):
     preuves: List[Preuve] = Field(default_factory=list)
 
 
-class EvenementRedoute(BaseModel):
+class EvenementRedoute(_StrictModel):
     id: str
     valeur_metier_id: str = ""
     evenement: str
@@ -71,13 +76,13 @@ class EvenementRedoute(BaseModel):
     preuves: List[Preuve] = Field(default_factory=list)
 
 
-class Ecart(BaseModel):
+class Ecart(_StrictModel):
     description: str
     justification: str = ""
     preuves: List[Preuve] = Field(default_factory=list)
 
 
-class SocleSecurite(BaseModel):
+class SocleSecurite(_StrictModel):
     id: str
     type_referentiel: str
     nom_referentiel: str
@@ -85,7 +90,7 @@ class SocleSecurite(BaseModel):
     ecarts: List[Ecart] = Field(default_factory=list)
 
 
-class Atelier1(BaseModel):
+class Atelier1(_StrictModel):
     mission: str = ""
     valeurs_metier: List[ValeurMetier] = Field(default_factory=list)
     biens_supports: List[BienSupport] = Field(default_factory=list)
@@ -93,7 +98,7 @@ class Atelier1(BaseModel):
     socle_securite: List[SocleSecurite] = Field(default_factory=list)
 
 
-class EbiosStudy(BaseModel):
+class EbiosStudy(_StrictModel):
     schema_version: str = SCHEMA_VERSION
     project_id: str
     source_document_ids: List[str] = Field(default_factory=list)
