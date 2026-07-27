@@ -33,15 +33,20 @@ def _default_gather(document_id: str) -> list[dict]:
     return list(cur)
 
 
-def _parse_json(raw: str) -> Optional[dict]:
+def _parse_json(raw) -> Optional[dict]:
+    if not isinstance(raw, str):
+        return None
     try:
-        return json.loads(raw)
+        parsed = json.loads(raw)
+        if isinstance(parsed, dict):
+            return parsed
     except (json.JSONDecodeError, TypeError):
         pass
     start, end = raw.find("{"), raw.rfind("}") + 1
     if 0 <= start < end:
         try:
-            return json.loads(raw[start:end])
+            parsed = json.loads(raw[start:end])
+            return parsed if isinstance(parsed, dict) else None
         except json.JSONDecodeError:
             return None
     return None
@@ -107,13 +112,20 @@ def _mk_resp(item: dict) -> dict:
     return {"nom": item.get("responsable_nom", "") or "", "type": rtype}
 
 
+def _union_preuves(preuves: list[dict], new_preuves: list[dict]) -> None:
+    """Fusionne `new_preuves` dans `preuves` en place, sans doublon (document_id, extrait)."""
+    seen = {(p["document_id"], p["extrait"]) for p in preuves}
+    for p in new_preuves:
+        marker = (p["document_id"], p["extrait"])
+        if marker not in seen:
+            preuves.append(p)
+            seen.add(marker)
+
+
 def _merge(bucket: dict, key: str, entry: dict) -> dict:
     """Dédup déterministe par clé normalisée ; fusion des preuves sans doublon."""
     if key in bucket:
-        seen = {(p["document_id"], p["extrait"]) for p in bucket[key]["preuves"]}
-        for p in entry["preuves"]:
-            if (p["document_id"], p["extrait"]) not in seen:
-                bucket[key]["preuves"].append(p)
+        _union_preuves(bucket[key]["preuves"], entry["preuves"])
         return bucket[key]
     bucket[key] = entry
     return entry
@@ -131,6 +143,8 @@ def _consolidate(raw: dict) -> tuple[dict, list[str]]:
         if not mission and parsed.get("mission"):
             mission = str(parsed["mission"]).strip()
         for item in parsed.get("valeurs_metier", []) or []:
+            if not isinstance(item, dict):
+                continue
             denom = str(item.get("denomination", "")).strip()
             if not denom:
                 continue
@@ -147,6 +161,8 @@ def _consolidate(raw: dict) -> tuple[dict, list[str]]:
                 "responsable": _mk_resp(item), "preuves": preuves,
             })
         for item in parsed.get("biens_supports", []) or []:
+            if not isinstance(item, dict):
+                continue
             denom = str(item.get("denomination", "")).strip()
             if not denom:
                 continue
@@ -177,16 +193,15 @@ def _consolidate(raw: dict) -> tuple[dict, list[str]]:
                                 f"« {name} » non reconnue — association ignorée")
         bs["valeurs_metier_associees"] = refs
 
-    seen_er: set = set()
+    ers_by_key: dict[tuple, dict] = {}
     for doc, parsed, chunks in raw["er"]:
         for item in parsed.get("evenements_redoutes", []) or []:
+            if not isinstance(item, dict):
+                continue
             evenement = str(item.get("evenement", "")).strip()
             if not evenement:
                 continue
             key = (_norm(item.get("valeur_metier", "")), _norm(evenement))
-            if key in seen_er:
-                continue
-            seen_er.add(key)
             preuves, w = resolve_preuves(item.get("extraits", []) or [], doc, chunks)
             warnings.extend(w)
             vm_id = vm_by_name.get(_norm(str(item.get("valeur_metier", ""))), "")
@@ -198,16 +213,24 @@ def _consolidate(raw: dict) -> tuple[dict, list[str]]:
                 warnings.append(f"ER « {evenement} » : gravité invalide « {gravite} » — "
                                 f"ramenée à 1 ({GRAVITE_LABELS[1]}), à corriger")
                 gravite = 1
-            ers.append({
-                "id": f"er-{len(ers) + 1}", "valeur_metier_id": vm_id,
-                "evenement": evenement, "impact": str(item.get("impact", "")),
-                "gravite": gravite,
-                "justification_gravite": str(item.get("justification_gravite", "")),
-                "preuves": preuves,
-            })
+            if key in ers_by_key:
+                _union_preuves(ers_by_key[key]["preuves"], preuves)
+            else:
+                ers_by_key[key] = {
+                    "id": "", "valeur_metier_id": vm_id,
+                    "evenement": evenement, "impact": str(item.get("impact", "")),
+                    "gravite": gravite,
+                    "justification_gravite": str(item.get("justification_gravite", "")),
+                    "preuves": preuves,
+                }
+    ers = list(ers_by_key.values())
+    for i, er in enumerate(ers, 1):
+        er["id"] = f"er-{i}"
 
     for doc, parsed, chunks in raw["gap"]:
         for item in parsed.get("socle_securite", []) or []:
+            if not isinstance(item, dict):
+                continue
             nom = str(item.get("nom_referentiel", "")).strip()
             if not nom:
                 continue
@@ -216,28 +239,31 @@ def _consolidate(raw: dict) -> tuple[dict, list[str]]:
                 warnings.append(f"Référentiel « {nom} » : état invalide « {etat} » — "
                                 "remplacé par Non appliqué")
                 etat = "Non appliqué"
-            ecarts = []
+            gap_entry = gaps.setdefault(_norm(nom), {
+                "id": "", "type_referentiel": str(item.get("type_referentiel", "")),
+                "nom_referentiel": nom, "etat_application": etat,
+                "_ecarts_by_key": {},
+            })
             for ec in item.get("ecarts", []) or []:
+                if not isinstance(ec, dict):
+                    continue
                 desc = str(ec.get("description", "")).strip()
                 if not desc:
                     continue
                 preuves, w = resolve_preuves(ec.get("extraits", []) or [], doc, chunks)
                 warnings.extend(w)
-                ecarts.append({"description": desc,
-                               "justification": str(ec.get("justification", "")),
-                               "preuves": preuves})
-            existing = gaps.get(_norm(nom))
-            if existing:
-                seen_desc = {_norm(e["description"]) for e in existing["ecarts"]}
-                existing["ecarts"].extend(e for e in ecarts
-                                          if _norm(e["description"]) not in seen_desc)
-            else:
-                gaps[_norm(nom)] = {"id": "", "type_referentiel":
-                                    str(item.get("type_referentiel", "")),
-                                    "nom_referentiel": nom, "etat_application": etat,
-                                    "ecarts": ecarts}
+                ec_key = _norm(desc)
+                if ec_key in gap_entry["_ecarts_by_key"]:
+                    _union_preuves(gap_entry["_ecarts_by_key"][ec_key]["preuves"], preuves)
+                else:
+                    gap_entry["_ecarts_by_key"][ec_key] = {
+                        "description": desc,
+                        "justification": str(ec.get("justification", "")),
+                        "preuves": preuves,
+                    }
     for i, gap in enumerate(gaps.values(), 1):
         gap["id"] = f"gap-{i}"
+        gap["ecarts"] = list(gap.pop("_ecarts_by_key").values())
 
     a1 = {"mission": mission, "valeurs_metier": list(vms.values()),
           "biens_supports": list(bss.values()), "evenements_redoutes": ers,

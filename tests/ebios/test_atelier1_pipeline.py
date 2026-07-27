@@ -1,6 +1,6 @@
 import json
 
-from core.ebios.atelier1 import generate_atelier1
+from core.ebios.atelier1 import _parse_json, generate_atelier1
 from core.ebios.evidence import resolve_preuves
 from core.ebios.schemas import EbiosStudy
 
@@ -93,3 +93,78 @@ def test_json_illisible_isole_pas_de_crash():
     study = generate_atelier1("p-1", ["doc-a.md"], llm=broken_llm, gather=lambda d: _CHUNKS)
     assert study["atelier_1"]["evenements_redoutes"] == []
     assert any("doc-a.md" in w and "redout" in w.lower() for w in study["warnings"])
+
+
+def test_json_liste_ou_none_isole():
+    assert _parse_json(None) is None
+
+    def llm_vm_liste(prompt, format=None):
+        if "valeurs métier" in prompt.lower():
+            return "[]"
+        return fake_llm(prompt, format=format)
+
+    study = generate_atelier1("p-1", ["doc-a.md"], llm=llm_vm_liste, gather=lambda d: _CHUNKS)
+    assert study["atelier_1"]["valeurs_metier"] == []
+    assert any("doc-a.md" in w for w in study["warnings"])
+
+
+def test_item_non_dict_ignore():
+    def llm_item_non_dict(prompt, format=None):
+        if "valeurs métier" in prompt.lower():
+            return json.dumps({"mission": "M", "valeurs_metier": ["chaine"],
+                               "biens_supports": []}, ensure_ascii=False)
+        return fake_llm(prompt, format=format)
+
+    study = generate_atelier1("p-1", ["doc-a.md"], llm=llm_item_non_dict,
+                              gather=lambda d: _CHUNKS)
+    assert study["atelier_1"]["valeurs_metier"] == []
+
+
+_CHUNKS_ALPHA = [
+    {"content": "Alpha signal perdu detecte sur le segment.", "page_number": 9},
+    {"content": "Alpha sauvegarde absente pour le systeme.", "page_number": 9},
+]
+_CHUNKS_BETA = [
+    {"content": "Beta signal perdu detecte sur le segment.", "page_number": 12},
+    {"content": "Beta sauvegarde absente pour le systeme.", "page_number": 12},
+]
+
+
+def _llm_dedup(prompt, format=None):
+    p = prompt.lower()
+    if "valeurs métier" in p:
+        return json.dumps({"mission": "M", "valeurs_metier": [], "biens_supports": []},
+                          ensure_ascii=False)
+    marker = "Alpha" if "alpha" in p else "Beta"
+    if "redout" in p:
+        return json.dumps({"evenements_redoutes": [
+            {"valeur_metier": "Contrôle mission", "evenement": "Perte du signal",
+             "impact": "x", "gravite": 2, "justification_gravite": "j",
+             "extraits": [f"{marker} signal perdu detecte sur le segment."]}]},
+            ensure_ascii=False)
+    return json.dumps({"socle_securite": [
+        {"type_referentiel": "Norme", "nom_referentiel": "ISO 27001",
+         "etat_application": "Appliqué",
+         "ecarts": [{"description": "Pas de sauvegarde", "justification": "",
+                     "extraits": [f"{marker} sauvegarde absente pour le systeme."]}]}]},
+        ensure_ascii=False)
+
+
+def _gather_dedup(doc):
+    return _CHUNKS_ALPHA if doc == "doc-a.md" else _CHUNKS_BETA
+
+
+def test_dedup_fusionne_preuves_er_et_gap():
+    study = generate_atelier1("p-1", ["doc-a.md", "doc-b.md"],
+                              llm=_llm_dedup, gather=_gather_dedup)
+    ers = study["atelier_1"]["evenements_redoutes"]
+    assert len(ers) == 1
+    assert len(ers[0]["preuves"]) == 2
+    assert {p["page"] for p in ers[0]["preuves"]} == {9, 12}
+
+    gaps = study["atelier_1"]["socle_securite"]
+    assert len(gaps) == 1
+    ecarts = gaps[0]["ecarts"]
+    assert len(ecarts) == 1
+    assert len(ecarts[0]["preuves"]) == 2
+    assert {p["page"] for p in ecarts[0]["preuves"]} == {9, 12}
