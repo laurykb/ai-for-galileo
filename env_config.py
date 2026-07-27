@@ -384,7 +384,15 @@ def get_config() -> Dict[str, Any]:
             "Essayez de reformuler la question, ou choisissez d'autres documents à interroger."
         ),
     }
-    
+
+    # --------------------- EBIOS RM -------------------
+    ebios_config = {
+        "EBIOS_TEMPLATE_PATH": os.environ.get(
+            "EBIOS_TEMPLATE_PATH",
+            "/home/marsattacks/Téléchargements/EBIOS_RM_Ateliers_modele(1).xlsx",
+        ),
+    }
+
     # --------------------- MERGE ALL -------------------
     full_config = {
         **paths_config,
@@ -403,6 +411,7 @@ def get_config() -> Dict[str, Any]:
         **ragas_config,
         **chroma_config,
         **messages_config,
+        **ebios_config,
         # Infos système
         "NUM_GPUS": num_gpus,
         "CUDA_AVAILABLE": num_gpus > 0,
@@ -499,6 +508,9 @@ RAGAS_JUDGE_CONCURRENCY = CONFIG["RAGAS_JUDGE_CONCURRENCY"]
 COLLECTION_NAME = CONFIG["COLLECTION_NAME"]
 
 OUT_OF_SCOPE_MESSAGE = CONFIG["OUT_OF_SCOPE_MESSAGE"]
+
+EBIOS_TEMPLATE_PATH = CONFIG["EBIOS_TEMPLATE_PATH"]
+
 NUM_GPUS = CONFIG["NUM_GPUS"]
 CUDA_AVAILABLE = CONFIG["CUDA_AVAILABLE"]
 LOG_LEVEL = CONFIG["LOG_LEVEL"]
