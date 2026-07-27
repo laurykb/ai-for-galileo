@@ -59,3 +59,21 @@ Réponds UNIQUEMENT avec ce JSON :
 TEXTE :
 {text}
 """
+
+MERGE_GROUPING_PROMPT = """Tu compares une liste d'éléments de l'Atelier 1 EBIOS RM, extraits de
+plusieurs documents distincts. Certains désignent la même réalité mais sont formulés
+différemment (ex : « Contrôle mission » et « Contrôle de la mission »).
+
+Règles strictes :
+- Ne regroupe QUE les éléments qui désignent clairement la même réalité.
+- N'invente rien, ne renomme rien, ne résume rien : renvoie uniquement des groupes
+  de numéros (indices de la liste ci-dessous).
+- Un élément qui ne doit être regroupé avec aucun autre n'apparaît dans aucun groupe.
+- Si rien ne doit être regroupé, renvoie une liste de groupes vide.
+
+Liste numérotée :
+{items}
+
+Réponds UNIQUEMENT avec ce JSON strict (exemple de forme) :
+{{"groupes": [[1, 4], [2, 7, 9]]}}
+"""

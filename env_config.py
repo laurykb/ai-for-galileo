@@ -394,6 +394,12 @@ def get_config() -> Dict[str, Any]:
         # Matériau max (caractères) par document pour l'extraction Atelier 1.
         # Dépassement : troncature + warning explicite (jamais silencieux).
         "EBIOS_MAX_EXTRACT_CHARS": int(os.environ.get("EBIOS_MAX_EXTRACT_CHARS", "24000")),
+        # Fusion sémantique des quasi-doublons inter-documents à la consolidation
+        # (rôle `synthesize` PROPOSE des regroupements, l'application reste
+        # déterministe côté code, chaque fusion tracée en warning). Désactivable :
+        # ne garde alors que la dédup exacte par dénomination.
+        "EBIOS_SEMANTIC_MERGE": os.environ.get("EBIOS_SEMANTIC_MERGE", "true").lower()
+                                in ("true", "1", "yes"),
     }
 
     # --------------------- MERGE ALL -------------------
@@ -514,6 +520,7 @@ OUT_OF_SCOPE_MESSAGE = CONFIG["OUT_OF_SCOPE_MESSAGE"]
 
 EBIOS_TEMPLATE_PATH = CONFIG["EBIOS_TEMPLATE_PATH"]
 EBIOS_MAX_EXTRACT_CHARS = CONFIG["EBIOS_MAX_EXTRACT_CHARS"]
+EBIOS_SEMANTIC_MERGE = CONFIG["EBIOS_SEMANTIC_MERGE"]
 
 NUM_GPUS = CONFIG["NUM_GPUS"]
 CUDA_AVAILABLE = CONFIG["CUDA_AVAILABLE"]
