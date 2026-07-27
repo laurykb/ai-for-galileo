@@ -391,6 +391,9 @@ def get_config() -> Dict[str, Any]:
             "EBIOS_TEMPLATE_PATH",
             "/home/marsattacks/Téléchargements/EBIOS_RM_Ateliers_modele(1).xlsx",
         ),
+        # Matériau max (caractères) par document pour l'extraction Atelier 1.
+        # Dépassement : troncature + warning explicite (jamais silencieux).
+        "EBIOS_MAX_EXTRACT_CHARS": int(os.environ.get("EBIOS_MAX_EXTRACT_CHARS", "24000")),
     }
 
     # --------------------- MERGE ALL -------------------
@@ -510,6 +513,7 @@ COLLECTION_NAME = CONFIG["COLLECTION_NAME"]
 OUT_OF_SCOPE_MESSAGE = CONFIG["OUT_OF_SCOPE_MESSAGE"]
 
 EBIOS_TEMPLATE_PATH = CONFIG["EBIOS_TEMPLATE_PATH"]
+EBIOS_MAX_EXTRACT_CHARS = CONFIG["EBIOS_MAX_EXTRACT_CHARS"]
 
 NUM_GPUS = CONFIG["NUM_GPUS"]
 CUDA_AVAILABLE = CONFIG["CUDA_AVAILABLE"]

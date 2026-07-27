@@ -1,14 +1,13 @@
 """Endpoints EBIOS RM — Atelier 1 : dossiers, brouillons versionnés, validation, exports."""
 from __future__ import annotations
 
-import json
 import queue
 import re
 import tempfile
 import threading
 import time
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
@@ -78,7 +77,9 @@ def get_project(project_id: str):
     latest = repo.latest_version(project_id)
     warnings: List[str] = []
     if latest:
-        warnings = bounded_control(EbiosStudy.model_validate(latest["study"]))
+        stored = list(latest["study"].get("warnings", []))
+        fresh = bounded_control(EbiosStudy.model_validate(latest["study"]))
+        warnings = stored + [w for w in fresh if w not in stored]
     return {"project": proj, "latest": latest, "warnings": warnings}
 
 

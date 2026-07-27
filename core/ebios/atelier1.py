@@ -10,7 +10,16 @@ from core.ebios.evidence import resolve_preuves
 from core.ebios.prompts import EXTRACT_ER_PROMPT, EXTRACT_GAP_PROMPT, EXTRACT_VM_PROMPT
 from core.ebios.schemas import EbiosStudy, GRAVITE_LABELS, bounded_control
 
-_MAX_CHARS = 24000  # matériau max par appel d'extraction
+_MAX_CHARS_DEFAULT = 24000  # matériau max par appel d'extraction, si env_config indisponible
+
+
+def _max_extract_chars() -> int:
+    try:
+        from env_config import EBIOS_MAX_EXTRACT_CHARS
+        return EBIOS_MAX_EXTRACT_CHARS
+    except ImportError:
+        return _MAX_CHARS_DEFAULT
+
 
 _DOMAINS = (
     ("vm", "ebios.extract.vm", EXTRACT_VM_PROMPT),
@@ -69,9 +78,14 @@ def generate_atelier1(project_id: str, document_ids: list[str],
     raw_results: dict[str, list[tuple[str, dict, list[dict]]]] = {"vm": [], "er": [], "gap": []}
     warnings: list[str] = []
 
+    limit = _max_extract_chars()
     for doc in document_ids:
         chunks = gather(doc)
-        text = "\n\n".join(c.get("content", "") for c in chunks)[:_MAX_CHARS]
+        joined = "\n\n".join(c.get("content", "") for c in chunks)
+        text = joined[:limit]
+        if len(joined) > limit:
+            warnings.append(f"Document tronqué pour l'extraction : {doc} "
+                            f"({len(joined)} caractères, limite {limit})")
         if not text.strip():
             warnings.append(f"Document sans contenu exploitable : {doc}")
             continue

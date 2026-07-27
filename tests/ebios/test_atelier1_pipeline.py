@@ -1,5 +1,6 @@
 import json
 
+import core.ebios.atelier1 as atelier1_module
 from core.ebios.atelier1 import _parse_json, generate_atelier1
 from core.ebios.evidence import resolve_preuves
 from core.ebios.schemas import EbiosStudy
@@ -152,6 +153,15 @@ def _llm_dedup(prompt, format=None):
 
 def _gather_dedup(doc):
     return _CHUNKS_ALPHA if doc == "doc-a.md" else _CHUNKS_BETA
+
+
+def test_troncature_signalee(monkeypatch):
+    monkeypatch.setattr(atelier1_module, "_max_extract_chars", lambda: 30)
+    long_chunks = [{"content": "x" * 50, "page_number": 1}]
+    study = generate_atelier1("p-1", ["doc-a.md"], llm=fake_llm,
+                              gather=lambda d: long_chunks)
+    warns = " ".join(study["warnings"])
+    assert "tronqué" in warns.lower() and "doc-a.md" in warns
 
 
 def test_dedup_fusionne_preuves_er_et_gap():

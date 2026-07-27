@@ -49,6 +49,21 @@ def test_get_expose_warnings_du_controle_borne(client):
     assert any("preuve" in w.lower() for w in detail["warnings"])
 
 
+def test_get_conserve_les_warnings_du_pipeline(client):
+    p = _project(client)
+    data = make_study()
+    pipeline_warning = ("ER « X » : gravité invalide « 9 » — ramenée à 1 (Mineure), "
+                        "à corriger")
+    data["warnings"] = [pipeline_warning]
+    data["atelier_1"]["valeurs_metier"][0]["preuves"] = []
+    client.put(f"/api/ebios/projects/{p['project_id']}/atelier-1",
+               json={"study": data, "expected_version": 0, "author": "ingénieur"})
+    detail = client.get(f"/api/ebios/projects/{p['project_id']}").json()
+    assert pipeline_warning in detail["warnings"]
+    assert any("preuve" in w.lower() for w in detail["warnings"])
+    assert len(detail["warnings"]) == len(set(detail["warnings"]))
+
+
 def test_validation_puis_export_xlsx(client, tmp_path):
     p = _project(client)
     client.put(f"/api/ebios/projects/{p['project_id']}/atelier-1",
