@@ -102,7 +102,10 @@ export function EbiosView() {
 
   const setA1 = (a1: Atelier1) => {
     if (!draft) return;
-    setDraft({ ...draft, atelier_1: a1 });
+    // Toute édition manuelle révoque la validation locale : l'export ne doit
+    // rester actif que sur un contenu re-validé (le backend fait de même en
+    // forçant validated_at à null lors du prochain save_version).
+    setDraft({ ...draft, atelier_1: a1, validated_at: null });
     setDirty(true);
   };
 
