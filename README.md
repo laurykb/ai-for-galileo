@@ -4,7 +4,7 @@
 questions/réponses **sourcées** sur des cibles de sécurité (ANSSI / Critères
 Communs) : retrieval hybride, agent ReAct, serveur MCP, observabilité,
 **évaluation chiffrée**. L'interface est un **front Next.js + API FastAPI**
-(`python serve.py`). Pile locale : Ollama (`mistral-small3.2` + `bge-m3`) et
+(`python serve.py`). Pile locale : Ollama (routage multi-modèles + `bge-m3`) et
 MongoDB, thème sombre.
 
 > **Ce que c'est** : une implémentation de référence **réutilisable et multi-OS** qui
@@ -27,10 +27,12 @@ brique est **activable**, **mesurée**, et **retirée quand la donnée ne la jus
 - **Observabilité** (traces/spans souverains) qui a réellement servi à diagnostiquer (ex.
   « la génération = ~85 % de la latence »).
 - **Agentique** : RAG-comme-outil, **serveur MCP**, **agent ReAct** streamé.
+- **Adaptatif** : modes Auto, RAG, Agent et **Analyse profonde**, synthèse MAP/REDUCE et routage des modèles par rôle.
+- **Pilotable** : métriques et couverture dans le Chat; onglet Agents pour versionner les prompts et les comparer sur golden set.
 - **Souveraineté** : tout tourne en local (Ollama + modèles auto-hébergés), zéro donnée
   envoyée à un tiers.
 
-## Résultats mesurés
+## Résultats mesurés — repère historique ANSSI
 
 **Qualité du retrieval** (golden set v2 de 30 Q/R ancrées dans le document,
 `python -m evals.run_eval --mode retrieval` ; dernier run archivé dans
@@ -42,8 +44,7 @@ brique est **activable**, **mesurée**, et **retirée quand la donnée ne la jus
 | context recall | **0.53** |
 | context precision | 0.29 |
 
-→ Le retrieval est **fonctionnel mais perfectible** : c'est le **maillon identifié comme
-prioritaire**, pas un acquis. La valeur du projet tient à la **démarche mesurée** (harnais
+→ Ce run reste un repère historique ANSSI. Les campagnes contemporaines multi-documentaires et RAGAS sont décrites dans `docs/PROJECT_STATE.md`; elles ne doivent pas être comparées directement à ce dataset. La valeur du projet tient à la **démarche mesurée** (harnais
 d'éval reproductible + observabilité) qui rend ce diagnostic possible et non à un score
 brut. Les chiffres sont reproductibles ; ils ne sont pas figés dans le marbre.
 
@@ -81,6 +82,7 @@ GPU contraint (un modèle 8B + grand contexte déborde la VRAM → offload CPU).
 
 Carte de lecture complète (couches, points d'entrée, flux) :
 **[ARCHITECTURE.md](ARCHITECTURE.md)**.
+État courant, validations et reprise : **[docs/PROJECT_STATE.md](docs/PROJECT_STATE.md)**.
 
 ```mermaid
 flowchart LR
@@ -111,7 +113,7 @@ Couches agentiques au-dessus : `tools/rag_tool.py` (RAG-comme-outil) → `rag_mc
 python -m venv .venv && source .venv/bin/activate   # Windows : .venv\Scripts\Activate.ps1
 pip install -r requirements.txt                      # RAG + dev ; + requirements-gpu.txt si GPU NVIDIA
 python -m spacy download fr_core_news_sm
-ollama pull mistral-small3.2 && ollama pull bge-m3   # (+ llama3.2:3b en option pour le mode rapide)
+ollama pull mistral-small3.2 && ollama pull bge-m3
 cp .env.example .env
 python serve.py            # démarre MongoDB + Ollama + le front Next.js + l'API FastAPI
 ```
@@ -149,12 +151,8 @@ env_config.py  config portable centralisée
 
 C'est un **PoC de référence**, à prendre comme tel :
 
-- **Corpus de démo** : le **multi-document est supporté** (un index BM25 par document
-  fusionné en index global, filtrage par périmètre via le multiselect de l'UI), mais
-  n'a été éprouvé qu'avec un document ingéré à la fois. Le passage à un corpus à grande
-  échelle (nombreux documents, gros volumes) n'est pas encore validé.
-- **Retrieval perfectible** : hit@k ~0.64 sur le golden set courant — le chantier
-  d'amélioration prioritaire (chunking, pondération hybride, reranking) est ouvert.
+- **Corpus de démonstration** : le multi-document, la couverture par document et la synthèse MAP/REDUCE sont opérationnels sur le corpus spatial courant. La généralisation à des corpus beaucoup plus volumineux reste à mesurer.
+- **Qualité à consolider** : les runs RAG et Agent sont disponibles, mais les campagnes Auto et Analyse profonde sur un golden set spatial stabilisé restent à exécuter.
 - **Génération** : le LLM local est le maillon faible en qualité (français parfois
   imparfait) ; l'exactitude prime sur la vitesse pour des docs de sécurité.
 - **Latence** : élevée sur petit GPU (offload CPU). Le vrai correctif est l'infra (GPU

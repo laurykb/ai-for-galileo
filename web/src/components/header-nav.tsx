@@ -1,46 +1,65 @@
 "use client";
 
-/** Navigation de l'Outil RAG — seule application de cette version.
- * Observabilité : réservée au mode Expert. Le logo (dans le layout) ramène
- * à l'accueil, qui rejoue l'intro puis retourne au chat. */
+/** Navigation par espaces métier. Chat, SRA et Documents sont explicites ;
+ * les aides et outils techniques du Chat restent contextuels à cet espace. */
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import { ExpertToggle, useExpert } from "@/components/expert-toggle";
 
-// Le chat et ses vues d'opérateur (mêmes onglets que le Streamlit d'origine).
-const RAG_LINKS = [
+const PRIMARY_LINKS = [
   { href: "/rag", label: "Chat" },
+  { href: "/sra", label: "Méthode SRA" },
   { href: "/documents", label: "Documents" },
-  { href: "/informations", label: "Informations" },
-  { href: "/ebios-rm", label: "EBIOS RM" },
 ];
-const RAG_EXPERT = [{ href: "/observability", label: "Observabilité" }];
-const RAG_TAIL = [{ href: "/settings", label: "Paramètres" }];
+const EXPERT_LINKS = [
+  { href: "/agents", label: "Prompts métier" },
+  { href: "/observability", label: "Suivi technique" },
+];
+const CHAT_LINKS = [
+  { href: "/informations", label: "Aide" },
+  { href: "/settings", label: "Réglages" },
+];
+const CHAT_PATHS = ["/rag", "/informations", "/settings", "/agents", "/observability"];
+
+function NavLink({ href, label, pathname }: { href: string; label: string; pathname: string }) {
+  const active = pathname.startsWith(href);
+  return (
+    <Link
+      href={href}
+      aria-current={active ? "page" : undefined}
+      className={`transition-colors hover:text-foreground ${active ? "text-accent-bright" : ""}`}
+    >
+      {label}
+    </Link>
+  );
+}
 
 export function HeaderNav() {
   const pathname = usePathname();
   const expert = useExpert();
-  if (pathname === "/") return null; // accueil : l'intro seule
+  if (pathname === "/") return null;
 
-  const links = [...RAG_LINKS, ...(expert ? RAG_EXPERT : []), ...RAG_TAIL];
+  const isChatWorkspace = CHAT_PATHS.some((path) => pathname.startsWith(path));
+  const chatLinks = [...CHAT_LINKS, ...(expert ? EXPERT_LINKS : [])];
 
   return (
     <nav className="flex items-center gap-5 text-sm text-fg-muted">
-      {links.map((l) => (
-        <Link
-          key={l.href}
-          href={l.href}
-          aria-current={pathname.startsWith(l.href) ? "page" : undefined}
-          className={`transition-colors hover:text-foreground ${
-            pathname.startsWith(l.href) ? "text-accent-bright" : ""
-          }`}
-        >
-          {l.label}
-        </Link>
+      {PRIMARY_LINKS.map((link) => (
+        <NavLink key={link.href} {...link} pathname={pathname} />
       ))}
-      <ExpertToggle />
+      {isChatWorkspace && (
+        <>
+          <span className="border-l border-edge pl-5 text-xs uppercase tracking-wider text-fg-faint">
+            Outils du chat
+          </span>
+          {chatLinks.map((link) => (
+            <NavLink key={link.href} {...link} pathname={pathname} />
+          ))}
+        </>
+      )}
+      {isChatWorkspace && <ExpertToggle />}
     </nav>
   );
 }

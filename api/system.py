@@ -18,6 +18,7 @@ def perf_stats() -> dict:
     from utils import perf
     rows = perf.snapshot()
     return {"gpu": [{"used": int(u), "total": int(t)} for u, t in (perf.gpu_memory() or [])],
+            "hardware_profile": perf.hardware_profile(),
             "aggregate": perf.aggregate(rows) if rows else None,
             "rows": [{"model": r["model"], "gen_tokens": r["gen_tokens"],
                       "tok_per_s": round(r["tok_per_s"], 1) if r["tok_per_s"] else None,
@@ -99,10 +100,15 @@ def set_generation_model(body: ModelAction) -> dict:
 # Clés .env modifiables depuis la vue Paramètres — source unique, partagée par la
 # lecture (GET) et l'écriture (liste blanche du POST) : ajouter une clé ici la rend
 # lisible ET modifiable, sans risque de dérive entre les deux endpoints.
-_SETTABLE_KEYS = ("NUM_CHUNKS", "EMBED_MODEL", "GEN_MODEL", "WEIGHT_SEMANTIC",
+_SETTABLE_KEYS = ("OLLAMA_HOST", "LLM_NUM_CTX", "EMBED_MODEL", "REWRITER_MODEL",
+                  "AGENT_MODEL", "PLANNER_MODEL", "EXTRACTION_MODEL",
+                  "SYNTHESIS_MODEL", "DEEP_RESEARCH_MODEL", "GEN_MODEL", "JUDGE_MODEL",
+                  "ENHANCEMENT_MODEL", "NUM_CHUNKS", "WEIGHT_SEMANTIC",
                   "WEIGHT_BM25", "CE_RELEVANCE_THRESHOLD", "AUTO_KEYWORDS",
                   "AUTO_QUESTIONS", "CHUNKING_MODE", "RAPTOR_SUMMARIES",
-                  "SELF_RAG_ENABLED", "SELF_RAG_THRESHOLD", "SELF_RAG_MAX_RETRIES")
+                  "SELF_RAG_ENABLED", "SELF_RAG_THRESHOLD", "SELF_RAG_MAX_RETRIES",
+                  "CE_DEVICE", "CORPUS_MAP_CONCURRENCY", "RAGAS_JUDGE_CONCURRENCY",
+                  "ENHANCE_MAX_WORKERS")
 
 
 @router.get("/api/settings")

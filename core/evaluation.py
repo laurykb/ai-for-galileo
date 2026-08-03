@@ -103,6 +103,25 @@ def context_precision_lexical(chunks: list, reference: str, topk: int = 5) -> fl
     return relevant / min(topk, len(chunks))
 
 
+def structured_axis_coverage(generated: str, expected_axes: list) -> Optional[float]:
+    """Part des axes structurés dont les faits obligatoires apparaissent.
+
+    Chaque axe est {name, keywords, min_hits?}. Cette métrique déterministe mesure
+    la couverture du contrat métier, indépendamment du style de rédaction.
+    """
+    if not expected_axes:
+        return None
+    blob = _normalize(generated)
+    covered = 0
+    for axis in expected_axes:
+        keywords = [str(k) for k in (axis.get("keywords") or []) if str(k).strip()]
+        minimum = int(axis.get("min_hits", len(keywords) or 1))
+        hits = sum(1 for keyword in keywords if _normalize(keyword) in blob)
+        if hits >= minimum:
+            covered += 1
+    return covered / len(expected_axes)
+
+
 def keyword_hit_rate(chunks: list, expected_keywords: list, topk: int = 10) -> Optional[float]:
     """
     Métrique de retrieval PURE (indépendante de la génération) :
@@ -132,7 +151,11 @@ def _get_judge_llm(model: str = None):
 def _ask_judge(llm, prompt: str, max_retries: int = 2) -> float:
     for attempt in range(max_retries + 1):
         try:
-            raw = llm.invoke(prompt).strip()
+            try:
+                raw = llm.invoke(prompt, format="json").strip()
+            except TypeError:
+                # Compatibilité avec les juges injectés des tests.
+                raw = llm.invoke(prompt).strip()
             matches = re.findall(r"\b(0(?:\.\d+)?|1(?:\.0+)?)\b", raw)
             if matches:
                 return min(1.0, max(0.0, float(matches[0])))
@@ -193,7 +216,7 @@ def decompose_claims(text: str, llm=None) -> list[str]:
 
 def _judge_supported(claim: str, context: str, llm) -> bool:
     """Le CONTEXTE soutient-il l'AFFIRMATION ? (juge LLM, >= 0.5 = soutenue)."""
-    prompt = f"""[TÂCHE] Le CONTEXTE soutient-il l'AFFIRMATION ? Réponds par un nombre : 1.0 = oui (directement justifiable), 0.0 = non.
+    prompt = f"""[TÂCHE] Le CONTEXTE soutient-il l'AFFIRMATION ? Réponds uniquement en JSON strict : {{"score": 1.0}} si oui (directement justifiable), sinon {{"score": 0.0}}.
 
 [CONTEXTE]
 {context[:2000]}
@@ -277,7 +300,7 @@ def context_recall_ragas(reference: str, chunks: list, llm=None) -> float:
 
 def _judge_chunk_relevant(question: str, reference: str, doc: str, llm) -> bool:
     """Le PASSAGE est-il pertinent pour répondre à la QUESTION (au vu de la RÉFÉRENCE) ?"""
-    prompt = f"""[TÂCHE] Ce PASSAGE est-il pertinent pour répondre à la QUESTION (au vu de la RÉPONSE attendue) ? 1.0 = pertinent, 0.0 = non.
+    prompt = f"""[TÂCHE] Ce PASSAGE est-il pertinent pour répondre à la QUESTION (au vu de la RÉPONSE attendue) ? Réponds uniquement en JSON strict : {{"score": 1.0}} si pertinent, sinon {{"score": 0.0}}.
 
 [QUESTION] {question}
 [RÉPONSE ATTENDUE] {reference[:500]}
@@ -655,11 +678,16 @@ def aggregate_metrics(results: list) -> dict:
 
 def save_eval_run_to_mongo(results: list, run_name: str,
                            db_name: str = "ragdb",
-                           collection_name: str = "eval_runs") -> str:
+                           collection_name: str = "eval_runs",
+                           dataset: str | None = None, mode: str | None = None,
+                           breakdown: dict | None = None) -> str:
     client = get_client()
     col = client[db_name][collection_name]
     doc = {
         "run_name": run_name,
+        "dataset": dataset,
+        "mode": mode,
+        "breakdown": breakdown or {},
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "aggregate": aggregate_metrics(results),
         "details": results,

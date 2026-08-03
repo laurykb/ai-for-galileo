@@ -94,3 +94,63 @@ def should_verify(question: str) -> dict:
     if _STAKE.search(_norm(question)):
         return {"verify": True, "reason": "question à enjeu (extraction critique)"}
     return {"verify": False, "reason": "question générale - vérification non nécessaire"}
+
+
+POLICY_VERSION = "adaptive-v1"
+
+_STRUCTURED_AGGREGATE = re.compile(
+    r"\b(categor|class|table|typologie|categories?).*"
+    r"(sources? de risques?|objectifs?|target objectives?|attaquants?)|"
+    r"(sources? de risques?|objectifs?|target objectives?|attaquants?).*"
+    r"(categor|class|table|typologie|categories?)")
+
+def select_query_strategy(question: str, requested_mode: str = "auto",
+                          parent_child: bool | None = None,
+                          self_rag: bool | None = None) -> dict:
+    """Décision automatique; les valeurs non-None sont des overrides Expert."""
+    from retrieval.intent import classify_intent
+    intent = classify_intent(question)
+    routed = route_query(question)
+    if requested_mode == "deep":
+        mode = "synth"
+        mode_reason = "mode ANALYSE PROFONDE forcé par l utilisateur"
+        mode_source = "expert_override"
+    elif requested_mode in ("rag", "agent", "synth"):
+        mode = requested_mode
+        mode_reason = f"mode {requested_mode.upper()} forcé par l’utilisateur"
+        mode_source = "expert_override"
+    elif intent == "aggregate":
+        mode, mode_reason, mode_source = (
+            "synth", "agrégation exhaustive détectée sur le corpus", "automatic")
+    else:
+        mode, mode_reason, mode_source = routed["mode"], routed["reason"], "automatic"
+    structured = bool(_STRUCTURED_AGGREGATE.search(_norm(question)))
+    query_type = ("structured_aggregate" if intent == "aggregate" and structured else
+                  "aggregate" if intent == "aggregate" else
+                  "multi_hop" if routed["signals"] else intent)
+    pc_source = "expert_override" if parent_child is not None else "automatic"
+    sr_source = "expert_override" if self_rag is not None else "automatic"
+    # Politique v1 prudente: aucune technique non validée n’est auto-activée.
+    pc_effective = bool(parent_child) if parent_child is not None else False
+    sr_effective = bool(self_rag) if self_rag is not None else False
+    verification = should_verify(question)
+    rationale = [mode_reason]
+    if parent_child is not None:
+        rationale.append("Parent-Child imposé par le mode Expert")
+    if self_rag is not None:
+        rationale.append("Self-RAG imposé par le mode Expert")
+    if verification["verify"]:
+        rationale.append(verification["reason"])
+    return {
+        "policy_version": POLICY_VERSION, "query_type": query_type,
+        "intent": intent, "mode": mode, "requested_mode": requested_mode,
+        "mode_source": mode_source, "signals": routed["signals"],
+        "retrieval": {
+            "profile": ("deep_research" if requested_mode == "deep" else
+                        "corpus_coverage" if mode == "synth" else
+                        "multi_hop" if mode == "agent" else "hybrid_precise"),
+            "parent_child": pc_effective, "parent_child_source": pc_source,
+            "self_rag": sr_effective, "self_rag_source": sr_source,
+        },
+        "verify": verification["verify"], "rationale": rationale,
+    }

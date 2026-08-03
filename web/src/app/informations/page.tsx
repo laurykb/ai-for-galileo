@@ -1,6 +1,6 @@
 import { Panel, PanelTitle } from "@/components/ui";
 
-/** Onglet Informations : explique les compétences du système (ce que chacune
+/** Aide contextuelle du Chat : explique les compétences du système (ce que chacune
  * fait et quand elle se déclenche), y compris le mode Synthèse corpus. Statique. */
 
 type Skill = { title: string; does: string; when: string };
@@ -34,7 +34,7 @@ const SKILLS: Skill[] = [
   {
     title: "Auto-correction (Self-RAG)",
     does: "Évalue la réponse produite et la retente si elle est jugée insuffisante, pour améliorer la fiabilité.",
-    when: "Quand l'option Self-RAG est active (réglable dans Paramètres).",
+    when: "Quand l'option Self-RAG est active (réglable dans Réglages).",
   },
   {
     title: "Attribution par affirmation",
@@ -53,8 +53,8 @@ export default function InformationsPage() {
     <div className="rise-in py-4">
       <div className="mx-auto max-w-3xl">
         <PanelTitle
-          kicker="Informations"
-          title="Compétences du système"
+          kicker="Chat documentaire"
+          title="Aide et fonctionnement"
           hint="Ce que fait chaque brique, et quand elle se déclenche."
         />
         <div className="flex flex-col gap-3">

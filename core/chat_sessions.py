@@ -182,6 +182,22 @@ def truncate_last_exchange(session_id: str) -> list[dict]:
     return msgs
 
 
+def set_last_assistant_eval(session_id: str, evaluation: dict):
+    """Attache les métriques qualité au dernier message assistant."""
+    doc = _col().find_one({"session_id": session_id}, {"messages": 1})
+    if not doc:
+        return
+    msgs = doc.get("messages", [])
+    for i in range(len(msgs) - 1, -1, -1):
+        if msgs[i].get("role") == "assistant":
+            _col().update_one(
+                {"session_id": session_id},
+                {"$set": {f"messages.{i}.eval": evaluation,
+                          "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S")}},
+            )
+            break
+
+
 def set_last_assistant_attribution(session_id: str, attribution: dict):
     """Attache l'attribution par affirmation au DERNIER message assistant.
 

@@ -31,13 +31,14 @@ def extract_from_document(document, aspect, llm=None, gather=None):
         from core.summarize import _gather_material as gather
     if llm is None:
         from core.model_router import build_llm
-        llm = build_llm("generate").invoke
+        llm = build_llm("extract").invoke
 
     material, _n, _basis = gather(document)
     if not (material or "").strip():
         return {"document": document, "items": [], "raw": ""}
     from core.summarize import _MAX_MATERIAL_CHARS
-    prompt = _EXTRACT_PROMPT.format(aspect=aspect, document=document,
-                                    material=material[:_MAX_MATERIAL_CHARS])
+    from core.prompt_registry import get_prompt
+    prompt = get_prompt("extract.map", _EXTRACT_PROMPT).format(
+        aspect=aspect, document=document, material=material[:_MAX_MATERIAL_CHARS])
     raw = llm(prompt)
     return {"document": document, "items": _parse_items(raw), "raw": raw}

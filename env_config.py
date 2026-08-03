@@ -226,10 +226,9 @@ def get_config() -> Dict[str, Any]:
     use_cross_encoder = os.environ.get("USE_CROSS_ENCODER", "true").lower() in ("true", "1", "yes")
     
     # Fallback pour le device du cross-encoder
-    if num_gpus >= 2:
-        default_ce_device = "cuda:1"  # Si 2+ GPUs, utiliser GPU 1 pour CE
-    else:
-        default_ce_device = "cuda:0" if num_gpus == 1 else "cpu"
+    # Ollama répartit les LLM sur toutes les cartes avec SCHED_SPREAD. Le CE
+    # utilise cuda:0 explicitement pour ne pas cibler une carte arbitrairement saturée.
+    default_ce_device = "cuda:0" if num_gpus else "cpu"
     
     ce_device = os.environ.get("CE_DEVICE", default_ce_device)
     cross_encoder_model_raw = os.environ.get(
@@ -299,6 +298,13 @@ def get_config() -> Dict[str, Any]:
         # agent (sous-questions) et le révise en cours de route. Par défaut le même
         # modèle que l'agent, surchargeable indépendamment via .env.
         "PLANNER_MODEL": os.environ.get("PLANNER_MODEL", "").strip() or agent_model,
+        # Gros corpus : modèle MAP, modèle REDUCE et rédacteur final indépendants.
+        "SYNTHESIS_MODEL": os.environ.get("SYNTHESIS_MODEL", "").strip() or gen_model,
+        "DEEP_RESEARCH_MODEL": os.environ.get("DEEP_RESEARCH_MODEL", "").strip() or "deepseek-r1:32b",
+        "EXTRACTION_MODEL": (os.environ.get("EXTRACTION_MODEL", "").strip()
+                             or os.environ.get("SYNTHESIS_MODEL", "").strip()
+                             or gen_model),
+        "JUDGE_MODEL": os.environ.get("JUDGE_MODEL", "").strip() or rewriter_model,
         # Attribution par affirmation (passe post-hoc, core/attribution.py) :
         # budget TOTAL de la passe (appel LLM + validation + retry compris).
         # Dépassé -> la réponse garde ses marqueurs inline et l'event
@@ -359,6 +365,7 @@ def get_config() -> Dict[str, Any]:
     # --------------------- CORPUS PIPELINE -------------------
     corpus_config = {
         "CORPUS_MAP_CONCURRENCY": int(os.environ.get("CORPUS_MAP_CONCURRENCY", "4")),
+        "COVERAGE_REPAIR_ENABLED": os.environ.get("COVERAGE_REPAIR_ENABLED", "false").lower() in ("true", "1", "yes"),
         "CORPUS_MAX_DOCS": int(os.environ.get("CORPUS_MAX_DOCS", "50")),
         "CORPUS_PREFILTER_TOPN": int(os.environ.get("CORPUS_PREFILTER_TOPN", "200")),
     }
@@ -385,23 +392,6 @@ def get_config() -> Dict[str, Any]:
         ),
     }
 
-    # --------------------- EBIOS RM -------------------
-    ebios_config = {
-        "EBIOS_TEMPLATE_PATH": os.environ.get(
-            "EBIOS_TEMPLATE_PATH",
-            "/home/marsattacks/Téléchargements/EBIOS_RM_Ateliers_modele(1).xlsx",
-        ),
-        # Matériau max (caractères) par document pour l'extraction Atelier 1.
-        # Dépassement : troncature + warning explicite (jamais silencieux).
-        "EBIOS_MAX_EXTRACT_CHARS": int(os.environ.get("EBIOS_MAX_EXTRACT_CHARS", "24000")),
-        # Fusion sémantique des quasi-doublons inter-documents à la consolidation
-        # (rôle `synthesize` PROPOSE des regroupements, l'application reste
-        # déterministe côté code, chaque fusion tracée en warning). Désactivable :
-        # ne garde alors que la dédup exacte par dénomination.
-        "EBIOS_SEMANTIC_MERGE": os.environ.get("EBIOS_SEMANTIC_MERGE", "false").lower()
-                                in ("true", "1", "yes"),
-    }
-
     # --------------------- MERGE ALL -------------------
     full_config = {
         **paths_config,
@@ -420,7 +410,6 @@ def get_config() -> Dict[str, Any]:
         **ragas_config,
         **chroma_config,
         **messages_config,
-        **ebios_config,
         # Infos système
         "NUM_GPUS": num_gpus,
         "CUDA_AVAILABLE": num_gpus > 0,
@@ -461,6 +450,10 @@ ENHANCE_NUM_CTX = CONFIG["ENHANCE_NUM_CTX"]
 AGENT_MODEL = CONFIG["AGENT_MODEL"]
 AGENT_MAX_ITERATIONS = CONFIG["AGENT_MAX_ITERATIONS"]
 PLANNER_MODEL = CONFIG["PLANNER_MODEL"]
+SYNTHESIS_MODEL = CONFIG["SYNTHESIS_MODEL"]
+DEEP_RESEARCH_MODEL = CONFIG["DEEP_RESEARCH_MODEL"]
+EXTRACTION_MODEL = CONFIG["EXTRACTION_MODEL"]
+JUDGE_MODEL = CONFIG["JUDGE_MODEL"]
 ATTRIBUTION_TIMEOUT_S = CONFIG["ATTRIBUTION_TIMEOUT_S"]
 RAG_FAST_MODE = CONFIG["RAG_FAST_MODE"]
 GEN_NUM_CHUNKS = CONFIG["GEN_NUM_CHUNKS"]
@@ -509,6 +502,7 @@ HYPE_MAX_QUESTIONS = CONFIG["HYPE_MAX_QUESTIONS"]
 CONTEXT_HEADERS_ENABLED = CONFIG["CONTEXT_HEADERS_ENABLED"]
 
 CORPUS_MAP_CONCURRENCY = CONFIG["CORPUS_MAP_CONCURRENCY"]
+COVERAGE_REPAIR_ENABLED = CONFIG["COVERAGE_REPAIR_ENABLED"]
 CORPUS_MAX_DOCS = CONFIG["CORPUS_MAX_DOCS"]
 CORPUS_PREFILTER_TOPN = CONFIG["CORPUS_PREFILTER_TOPN"]
 
@@ -517,10 +511,6 @@ RAGAS_JUDGE_CONCURRENCY = CONFIG["RAGAS_JUDGE_CONCURRENCY"]
 COLLECTION_NAME = CONFIG["COLLECTION_NAME"]
 
 OUT_OF_SCOPE_MESSAGE = CONFIG["OUT_OF_SCOPE_MESSAGE"]
-
-EBIOS_TEMPLATE_PATH = CONFIG["EBIOS_TEMPLATE_PATH"]
-EBIOS_MAX_EXTRACT_CHARS = CONFIG["EBIOS_MAX_EXTRACT_CHARS"]
-EBIOS_SEMANTIC_MERGE = CONFIG["EBIOS_SEMANTIC_MERGE"]
 
 NUM_GPUS = CONFIG["NUM_GPUS"]
 CUDA_AVAILABLE = CONFIG["CUDA_AVAILABLE"]

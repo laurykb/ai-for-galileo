@@ -24,6 +24,14 @@ from utils import perf
 _TIMEOUT_S = 600
 
 
+class GenerationCancelled(RuntimeError):
+    """Raised when a caller explicitly stops a long-running generation."""
+
+
+class GenerationTruncated(RuntimeError):
+    """Raised when Ollama reaches the configured output-token limit."""
+
+
 def _record_stats(model: str, data: dict, total_s: float, ttft_s: float | None) -> None:
     """Enregistre les stats EXACTES renvoyées par Ollama (durées en nanosecondes)."""
     try:
@@ -52,7 +60,10 @@ class OllamaClient:
         options = dict(self.options)
         if stop:
             options["stop"] = stop
+        think = options.pop("think", None)
         payload = {"model": self.model, "prompt": prompt, "stream": stream, "options": options}
+        if think is not None:
+            payload["think"] = bool(think)
         if fmt:
             # Sortie contrainte Ollama (ex: "json") : le serveur garantit un JSON valide.
             payload["format"] = fmt
@@ -72,6 +83,43 @@ class OllamaClient:
             raise RuntimeError(f"Ollama: {data['error']}")
         _record_stats(self.model, data, time.perf_counter() - t0, ttft_s=None)
         return data.get("response", "")
+
+    def invoke_cancellable(self, prompt: str, stop=None, format=None, cancel_event=None) -> str:
+        """Invoke Ollama through a stream that can be closed by the caller."""
+        if cancel_event is None:
+            return self.invoke(prompt, stop=stop, format=format)
+        if cancel_event.is_set():
+            raise GenerationCancelled("Génération arrêtée par l’utilisateur")
+        t0 = time.perf_counter()
+        ttft_s = None
+        chunks: list[str] = []
+        with requests.post(f"{self.base_url}/api/generate",
+                           json=self._payload(prompt, True, stop, fmt=format),
+                           stream=True, timeout=_TIMEOUT_S) as response:
+            response.raise_for_status()
+            for line in response.iter_lines():
+                if cancel_event.is_set():
+                    response.close()
+                    raise GenerationCancelled("Génération arrêtée par l’utilisateur")
+                if not line:
+                    continue
+                data = json.loads(line)
+                if data.get("error"):
+                    raise RuntimeError("Ollama: " + str(data.get("error")))
+                token = data.get("response", "")
+                if token:
+                    if ttft_s is None:
+                        ttft_s = time.perf_counter() - t0
+                    chunks.append(token)
+                if data.get("done"):
+                    _record_stats(self.model, data, time.perf_counter() - t0, ttft_s)
+                    if data.get("done_reason") == "length":
+                        raise GenerationTruncated(
+                            f"Ollama a tronqué la sortie de {self.model}")
+                    break
+        if cancel_event.is_set():
+            raise GenerationCancelled("Génération arrêtée par l’utilisateur")
+        return "".join(chunks)
 
     def stream(self, prompt: str, stop=None) -> Iterator[str]:
         t0 = time.perf_counter()

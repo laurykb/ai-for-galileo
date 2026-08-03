@@ -33,7 +33,7 @@ placement des modèles au nombre de GPU trouvés.
 
 ## 3. Gestion de la VRAM
 
-- **Modèles résidents** (`OLLAMA_KEEP_ALIVE=-1`, via un drop-in systemd
+- **Modèles résidents** (`OLLAMA_KEEP_ALIVE=15m`, via un drop-in systemd
   `/etc/systemd/system/ollama.service.d/override.conf`) + `OLLAMA_MAX_LOADED_MODELS` :
   on **garde les modèles chargés** → fin des rechargements. Mesuré : **~50 s → ~14 s à froid**.
 - **`num_ctx` plafonné par rôle** (`core/model_router._ROLE_PARAMS`) : rewrite/judge = 8192,
@@ -59,9 +59,7 @@ partitionnement est **par tâche** et **par device** :
 - **Par rôle** (`core/model_router.py`) : un modèle **léger** pour les tâches mécaniques
   (réécriture, agent, juge), un modèle **fort** pour la génération finale. On ne paie pas un
   gros modèle pour reformuler une requête.
-- **Par device** (`env_config.py`) : avec 2 GPU, **LLM sur `cuda:0`**, **cross-encoder de
-  rerank sur `cuda:1`** (`CE_DEVICE`). Les deux tournent **en parallèle** sans se disputer la
-  VRAM ni le calcul.
+- **Par device** (`env_config.py`) : Ollama répartit les modèles sur les deux GPU avec `OLLAMA_SCHED_SPREAD=1`. Le cross-encoder est fixé sur `cuda:0` (`CE_DEVICE`) et protégé par un singleton verrouillé. Le profil exposé par `/api/perf` est la source de vérité.
 
 > Pour aller plus loin (vrai tensor-parallelism d'un gros modèle), le chemin propre est de
 > pointer le client (`core/llm_client.py`) vers un serveur **vLLM/SGLang** : l'interface ne
@@ -84,9 +82,9 @@ partitionnement est **par tâche** et **par device** :
 
 | Levier | Fichier / réglage | Effet mesuré |
 |---|---|---|
-| Modèles résidents | `OLLAMA_KEEP_ALIVE=-1` | démarrage à froid **50 s → 14 s** |
+| Modèles résidents | `OLLAMA_KEEP_ALIVE=15m` | démarrage à froid **50 s → 14 s** |
 | `num_ctx` plafonné | `model_router._ROLE_PARAMS` | évite **~30 Go** (→ 148 Go) de KV-cache |
-| Split LLM / rerank | `CE_DEVICE=cuda:1` | les deux GPU travaillent en parallèle |
+| Split LLM / rerank | `CE_DEVICE=cuda:0` | les deux GPU travaillent en parallèle |
 | Modèle léger en génération | `GEN_MODEL=llama3.2:3b` + `RAG_FAST_MODE` | **150 s → 27 s** (~5-6×) |
 | Retrieval threadé | `retrieval/retrieve.py` | sémantique + BM25 en parallèle |
 | Timeout embeddings | `EMBED_TIMEOUT_S=180` | absorbe le swap à froid (sinon vecteurs nuls) |
@@ -103,3 +101,10 @@ défaut.
 - **Quantification** plus agressive (AWQ/GPTQ) pour faire tenir un plus gros modèle.
 - **Mesure systématique** : brancher un suivi tokens/s et VRAM utilisée (les traces
   `utils/tracing` chronomètrent déjà chaque span : retrieval, rerank, génération).
+
+
+## Profil bi-GPU actuel
+
+Le profil central est exposé par `GET /api/perf`. Avec 2 x 48 Go : `OLLAMA_SCHED_SPREAD=1`, `OLLAMA_NUM_PARALLEL=4`, `OLLAMA_MAX_LOADED_MODELS=4`, `CE_DEVICE=cuda:0`. Le mode Analyse profonde charge DeepSeek à la demande et le décharge systématiquement afin de rendre la VRAM aux modes standards.
+
+État validé après redémarrage le 2026-07-27 : l’application pointe sur le service système bi-GPU persistant `http://127.0.0.1:11434`. Son override configure `OLLAMA_SCHED_SPREAD=1`, quatre requêtes parallèles et quatre modèles chargés au maximum. Le pilote NVIDIA 595.84 détecte les deux RTX 6000 Ada; un chargement réel de `deepseek-r1:32b` a confirmé l’utilisation des deux GPU.

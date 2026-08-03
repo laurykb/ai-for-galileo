@@ -1,7 +1,7 @@
 """Tests unitaires des métriques d'évaluation (déterministes, sans LLM)."""
 from core.evaluation import (
     exact_match, f1_token, context_recall_lexical, context_precision_lexical, keyword_hit_rate,
-    _parse_verify_json, verify_answer,
+    _parse_verify_json, verify_answer, structured_axis_coverage,
 )
 
 
@@ -43,6 +43,18 @@ def test_keyword_hit_rate():
 def test_keyword_hit_rate_edge_cases():
     assert keyword_hit_rate([{"doc": "x"}], []) is None
     assert keyword_hit_rate([], ["x"]) == 0.0
+
+
+# -- Couverture structurée -----------------------------------------------------
+def test_structured_axis_coverage():
+    axes = [
+        {"name": "sources", "keywords": ["acteur étatique", "cybercriminel"], "min_hits": 2},
+        {"name": "objectifs", "keywords": ["espionnage", "perturbation"], "min_hits": 1},
+    ]
+    answer = "Acteur étatique et cybercriminel. Objectif : espionnage."
+    assert structured_axis_coverage(answer, axes) == 1.0
+    assert structured_axis_coverage("acteur étatique seulement", axes) == 0.0
+    assert structured_axis_coverage(answer, []) is None
 
 
 # -- Vérificateur fusionné (parsing déterministe, hors-ligne) ------------------

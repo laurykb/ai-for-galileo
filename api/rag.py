@@ -55,6 +55,20 @@ def _degenerate(text: str) -> str | None:
 router = APIRouter()
 
 
+def _unload_ollama_model(model: str) -> None:
+    """Compatibilité API ; le cycle de vie est centralisé dans le routeur."""
+    from core.model_router import unload_model
+    unload_model(model)
+
+
+def _deep_synthesis_events(question, model: str, **kwargs):
+    """Garantit le déchargement du modèle profond, succès, erreur ou annulation."""
+    try:
+        yield from _synthesize_corpus(question, **kwargs)
+    finally:
+        _unload_ollama_model(model)
+
+
 def _synthesize_corpus(question, **kwargs):
     """Indirection paresseuse et patchable (tests) vers le pipeline de synthèse
     corpus (Chantier 1b) : import différé pour ne pas alourdir le démarrage."""
@@ -108,6 +122,20 @@ def _run_attribution(question: str, answer_txt: str, chunks: list,
         except Exception:
             pass  # la persistance est un bonus
     return attribution
+
+
+def _run_quality(question: str, answer_txt: str, chunks: list,
+                 session_id: str | None) -> dict:
+    """Évaluation post-hoc sans référence : 3 axes observables, persistés."""
+    from core.evaluation import verify_answer
+    quality = verify_answer(question, answer_txt, chunks or []) or {}
+    if session_id:
+        try:
+            from core.chat_sessions import set_last_assistant_eval
+            set_last_assistant_eval(session_id, quality)
+        except Exception:
+            pass
+    return quality
 
 
 def scope_arguments(source: str | None, arguments: dict) -> dict:
@@ -196,24 +224,32 @@ def ask(body: AskBody) -> StreamingResponse:
                 except Exception:
                     session_id = None  # Mongo down : conversation éphémère
 
-            # Routage : Auto -> intention ; sinon forcé (rag/agent/synth).
-            if body.mode in ("rag", "agent", "synth"):
-                effective, reason = body.mode, f"mode {body.mode.upper()} forcé"
-            else:
-                from retrieval.intent import classify_intent
-                intent = classify_intent(body.question)
-                if intent == "aggregate":
-                    effective, reason = "synth", "synthèse corpus (agrégation détectée)"
-                else:
-                    from core.router import route_query
-                    d = route_query(body.question)
-                    effective, reason = d["mode"], d["reason"]
+            from core.router import select_query_strategy
+            strategy = select_query_strategy(
+                body.question, requested_mode=body.mode,
+                parent_child=body.parent_child, self_rag=body.self_rag,
+            )
+            effective = strategy["mode"]
+            reason = strategy["rationale"][0]
             yield _sse({"type": "route", "mode": effective, "reason": reason})
+            yield _sse({"type": "strategy", **strategy})
 
             if effective == "synth":
                 answer_txt = ""
                 documents: list = []
-                for ev in _synthesize_corpus(body.question):
+                chunks: list = []
+                synth_kwargs = {}
+                if body.mode == "deep":
+                    from core.model_router import build_llm
+                    from env_config import DEEP_RESEARCH_MODEL
+                    synth_kwargs["llm"] = build_llm(
+                        "synthesize", model=DEEP_RESEARCH_MODEL,
+                        think=True, num_predict=4096,
+                    ).invoke
+                events = (_deep_synthesis_events(body.question, DEEP_RESEARCH_MODEL, **synth_kwargs)
+                          if body.mode == "deep" else
+                          _synthesize_corpus(body.question, **synth_kwargs))
+                for ev in events:
                     t = ev.get("type")
                     if t == "stage":
                         yield _sse(ev)
@@ -224,11 +260,27 @@ def ask(body: AskBody) -> StreamingResponse:
                         yield _sse({"type": "token", "text": ev["text"]})
                     elif t == "done":
                         documents = ev["result"].get("documents", [])
+                        chunks = ev["result"].get("chunks", [])
                         citations = [{"source": d} for d in documents]
+                        document_coverage = ev["result"].get("document_coverage")
+                        axis_coverage = ev["result"].get("coverage")
+                        if document_coverage:
+                            yield _sse({"type": "coverage", "documents": document_coverage,
+                                        "axes": axis_coverage})
+                        if chunks:
+                            yield _sse({"type": "retrieved",
+                                        "chunks": [_trim_chunk(c) for c in chunks]})
                         yield _sse({"type": "sources", "citations": citations})
                         _persist_exchange(session_id, body.source, body.question,
-                                          answer_txt, citations, None, [])
+                                          answer_txt, citations, None, chunks)
                         yield _sse({"type": "done", "found": bool(answer_txt)})
+                        try:
+                            if answer_txt and chunks:
+                                yield _sse({"type": "eval",
+                                            **_run_quality(body.question, answer_txt,
+                                                           chunks, session_id)})
+                        except Exception:
+                            pass
                 return
 
             if effective == "agent":
@@ -267,6 +319,13 @@ def ask(body: AskBody) -> StreamingResponse:
                                                        chunks, session_id)})
                 except Exception:
                     pass  # l'attribution est un bonus : ne jamais bloquer
+                try:
+                    if answer_txt and chunks:
+                        yield _sse({"type": "eval",
+                                    **_run_quality(body.question, answer_txt,
+                                                   chunks, session_id)})
+                except Exception:
+                    pass  # l évaluation est un bonus : ne jamais bloquer
                 return
 
             # ─ RAG direct ─
@@ -276,8 +335,8 @@ def ask(body: AskBody) -> StreamingResponse:
                 body.question,
                 source_filter=body.source,
                 conversation_history=body.history or [],
-                parent_child_on=body.parent_child,
-                self_rag_enabled=body.self_rag,
+                parent_child_on=strategy["retrieval"]["parent_child"],
+                self_rag_enabled=strategy["retrieval"]["self_rag"],
                 system_prompt=body.system_prompt or None,
             )
             yield _sse({"type": "retrieved",
@@ -318,27 +377,19 @@ def ask(body: AskBody) -> StreamingResponse:
             except Exception:
                 pass  # l'attribution est un bonus : ne jamais bloquer
 
-            # Vérification ciblée (Auto + question à enjeu). Pas de double
-            # éval si le Self-RAG a DÉJÀ vérifié — flag EFFECTIF (.env par
-            # défaut quand le front envoie null).
+            # Évaluation qualité pour TOUTE réponse disposant de preuves.
+            # Un seul appel fusionné au JUDGE_MODEL, après affichage de la réponse.
             try:
-                from core.router import should_verify
-                from env_config import SELF_RAG_ENABLED
-                self_rag_on = (body.self_rag if body.self_rag is not None
-                               else SELF_RAG_ENABLED)
-                if (body.mode == "auto" and citations and not self_rag_on
-                        and should_verify(body.question)["verify"]):
-                    from core.evaluation import verify_answer
+                if answer_txt and chunks:
                     frame = {"type": "eval",
-                             **(verify_answer(body.question, answer_txt,
-                                              chunks or []) or {})}
+                             **_run_quality(body.question, answer_txt,
+                                            chunks or [], session_id)}
                     if attribution and attribution.get("ok"):
-                        # Compteurs d'attribution dans le bloc de vérification.
                         for k in ("n_affirmations", "n_sourcees", "n_non_sourcees"):
                             frame[k] = attribution.get(k)
                     yield _sse(frame)
             except Exception:
-                pass  # la vérif est un bonus : ne jamais bloquer la réponse
+                pass  # l’évaluation est un bonus : ne jamais bloquer la réponse
         except Exception as e:  # Ollama/Mongo coupé, timeout… -> trame lisible
             yield _sse({"type": "error",
                         "message": f"{type(e).__name__}: {str(e)[:200]}"})
@@ -370,8 +421,10 @@ def regenerate(body: RegenerateBody) -> dict:
                                            citations or [], chunks=used or body.chunks)
         except Exception:
             pass
+    evidence = used or body.chunks or []
+    quality = _run_quality(body.question, rep or "", evidence, body.session_id) if rep and evidence else None
     return {"answer": rep or "", "citations": citations or [],
-            "chunks": [_trim_chunk(c) for c in (used or body.chunks or [])]}
+            "chunks": [_trim_chunk(c) for c in evidence], "eval": quality}
 
 
 class VerifyBody(BaseModel):

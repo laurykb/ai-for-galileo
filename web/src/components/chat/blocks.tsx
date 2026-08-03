@@ -141,11 +141,16 @@ export function EvalBlock({ e, attribution }: { e: EvalResult; attribution?: Att
   // depuis la trame `eval` enrichie (rechargement de session).
   const nAff = attribution?.ok ? attribution.n_affirmations : e.n_affirmations;
   const nNon = (attribution?.ok ? attribution.n_non_sourcees : e.n_non_sourcees) ?? 0;
+  const axes = [e.faithfulness, e.answer_relevance, e.context_relevance]
+    .filter((v): v is number => typeof v === "number");
+  const overall = axes.length ? axes.reduce((a, b) => a + b, 0) / axes.length : 0;
+  const verdict = overall >= 0.8 ? "Bonne" : overall >= 0.6 ? "À vérifier" : "Fragile";
+  const verdictCls = overall >= 0.8 ? "text-good" : overall >= 0.6 ? "text-warn" : "text-bad";
   return (
     <div className="mt-2 rounded-lg border border-edge bg-surface-2 px-3 py-2 text-xs">
       <p className="flex items-center gap-1.5 text-[11px] uppercase tracking-[0.14em] text-fg-faint">
-        Vérification automatique
-        <Hint text="Question à enjeu détectée : fidélité aux sources contrôlée par LLM-as-judge (0 → 1), et attribution de chaque affirmation à son passage source." />
+        Qualité estimée · <span className={verdictCls}>{verdict} {Math.round(overall * 100)} %</span>
+        <Hint text="Évaluation locale sans réponse de référence : fidélité aux preuves, pertinence de la réponse et pertinence du contexte (0 → 1). Ce score est un indicateur, pas une garantie de vérité." />
       </p>
       <div className="mt-1.5 flex flex-wrap gap-x-5 gap-y-1 font-mono tabular-nums text-fg-muted">
         <span>Fidélité {fmt(e.faithfulness ?? 0)}</span>

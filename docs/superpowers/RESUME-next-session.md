@@ -1,5 +1,9 @@
 # Reprise — état du projet & tâches restantes (2026-07-22)
 
+> **Archive Claude/Superpowers.** Pour les travaux actuels avec Codex, utiliser `docs/CODEX-ROADMAP.md` et les règles de `AGENTS.md`. En cas de divergence, le code et les tests actuels prévalent.
+
+> **Cette reprise est obsolète.** L’état opérationnel consolidé du 2026-07-24, l’architecture effective, les validations et le prochain ordre de travail sont dans `docs/PROJECT_STATE.md`. Ne pas exécuter directement la liste ci-dessous : plusieurs éléments sont désormais implémentés.
+
 > ## ⏸️ REPRISE 2026-07-23 — Vague 1 : code FAIT, mesures 30-q à confirmer
 >
 > **Fait aujourd'hui (2026-07-22, tout commité, branche `feat/chantier1-retrieval-multidoc`) :**

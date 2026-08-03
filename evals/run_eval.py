@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+from concurrent.futures import ThreadPoolExecutor
 import time
 from pathlib import Path
 
@@ -34,14 +36,14 @@ _METRIC_KEYS = [
     "keyword_hit_rate", "context_recall", "context_precision",
     "exact_match", "f1_token", "faithfulness", "answer_relevance",
     "answer_relevancy", "context_relevance", "taux_affirmations_sourcees",
-    "precision_attribution", "latency_s", "num_chunks_retrieved",
+    "precision_attribution", "structured_axis_coverage", "latency_s", "num_chunks_retrieved",
 ]
 
 _DEFAULT_DATASET = Path(__file__).resolve().parent / "golden_qa_anssi_v2.json"
 _LAST_EVAL_PATH = Path(__file__).resolve().parent / "last_eval.json"
 
 
-def _write_last_eval(path, dataset_name, mode, run_name, aggregate, num_questions):
+def _write_last_eval(path, dataset_name, mode, run_name, aggregate, num_questions, breakdown=None):
     """Archive l'agrégat du dernier run dans evals/last_eval.json (tous modes,
     dont ragas). Boussole lisible hors Mongo. Best-effort côté appelant."""
     payload = {
@@ -50,6 +52,7 @@ def _write_last_eval(path, dataset_name, mode, run_name, aggregate, num_question
         "run_name": run_name,
         "num_questions": num_questions,
         "aggregate": aggregate,
+        "breakdown": breakdown or {},
     }
     Path(path).write_text(json.dumps(payload, ensure_ascii=False, indent=2),
                           encoding="utf-8")
@@ -70,6 +73,24 @@ def _aggregate(results: list) -> dict:
         vals = [r[k] for r in ok if isinstance(r.get(k), (int, float))]
         agg[k] = round(sum(vals) / len(vals), 4) if vals else None
     return agg
+
+
+def _aggregate_by(results: list, field: str) -> dict:
+    """Agrège les métriques par catégorie/stratégie, sans mélanger les profils."""
+    groups = {}
+    for result in results:
+        key = result.get(field) or "unknown"
+        groups.setdefault(str(key), []).append(result)
+    return {key: {"num_questions": len(rows), "aggregate": _aggregate(rows)}
+            for key, rows in sorted(groups.items())}
+
+
+def _breakdown(results: list) -> dict:
+    return {
+        "by_query_type": _aggregate_by(results, "query_type"),
+        "by_strategy_mode": _aggregate_by(results, "strategy_mode"),
+        "by_strategy_profile": _aggregate_by(results, "strategy_profile"),
+    }
 
 
 def _attribution_metrics(metrics: dict, question: str, generated: str,
@@ -96,18 +117,66 @@ def _attribution_metrics(metrics: dict, question: str, generated: str,
                 att["affirmations"], chunks, judge)
 
 
+def _execute_adaptive(question: str, strategy: dict, source_filter=None):
+    """Exécute réellement la stratégie choisie par le contrôleur."""
+    mode = strategy["mode"]
+    if mode == "synth":
+        from core.synthesize_corpus import synthesize_corpus
+        result = {}
+        for event in synthesize_corpus(question):
+            if event.get("type") == "done":
+                result = event.get("result") or {}
+        return result.get("answer", ""), result.get("chunks", []), []
+    if mode == "agent":
+        from core.planner import PlannerAgent
+        if source_filter:
+            from tools.rag_tool import run_tool
+            def scoped(name, arguments):
+                args = dict(arguments or {})
+                args.setdefault("document", source_filter)
+                return run_tool(name, args)
+            result = PlannerAgent(tool_runner=scoped).run(question)
+        else:
+            result = PlannerAgent().run(question)
+        return result.get("answer", ""), result.get("chunks", []), result.get("sources", [])
+    from core.ask import process_query
+    return process_query(question, source_filter=source_filter)
+
+
+def _execute_deep(question: str):
+    """Exécute le même pipeline Analyse profonde que l API, avec déchargement."""
+    from api.rag import _deep_synthesis_events
+    from core.model_router import build_llm
+    from env_config import DEEP_RESEARCH_MODEL
+
+    llm = build_llm(
+        "synthesize", model=DEEP_RESEARCH_MODEL, think=True, num_predict=4096,
+    ).invoke
+    result = {}
+    for event in _deep_synthesis_events(
+        question, DEEP_RESEARCH_MODEL, llm=llm,
+    ):
+        if event.get("type") == "done":
+            result = event.get("result") or {}
+    return result.get("answer", ""), result.get("chunks", []), []
+
+
 def _evaluate_item(item: dict, mode: str, source_filter: str, use_judge: bool, judge) -> dict:
     from core.ask import process_query, retrieve_only
     from core.evaluation import (
-        evaluate_single, keyword_hit_rate, context_recall_lexical, context_precision_lexical,
+        evaluate_single, keyword_hit_rate, structured_axis_coverage, context_recall_lexical, context_precision_lexical,
         faithfulness_ragas, context_recall_ragas, context_precision_ragas, answer_relevancy_ragas,
     )
 
     question = (item.get("question") or "").strip()
+    from core.router import select_query_strategy
+    requested_mode = "deep" if mode == "deep_ragas" else item.get("mode", "auto")
+    strategy = select_query_strategy(question, requested_mode=requested_mode)
     reference = (item.get("answer") or item.get("reference") or "").strip()
     expected_kw = item.get("expected_keywords") or []
 
     t0 = time.time()
+    generated = ""
     try:
         if mode == "retrieval":
             _q_main, chunks = retrieve_only(question, source_filter=source_filter)
@@ -119,8 +188,14 @@ def _evaluate_item(item: dict, mode: str, source_filter: str, use_judge: bool, j
                 "context_precision": context_precision_lexical(chunks, reference) if reference else None,
                 "num_chunks_retrieved": len(chunks),
             }
-        elif mode == "ragas":
-            generated, chunks, _ = process_query(question, source_filter=source_filter)
+        elif mode in ("ragas", "adaptive_ragas", "deep_ragas"):
+            if mode == "deep_ragas":
+                generated, chunks, _ = _execute_deep(question)
+            elif mode == "adaptive_ragas":
+                generated, chunks, _ = _execute_adaptive(
+                    question, strategy, source_filter=source_filter)
+            else:
+                generated, chunks, _ = process_query(question, source_filter=source_filter)
             chunks = chunks or []
             metrics = {
                 "question": question,
@@ -131,8 +206,12 @@ def _evaluate_item(item: dict, mode: str, source_filter: str, use_judge: bool, j
                 "keyword_hit_rate": keyword_hit_rate(chunks, expected_kw),
                 "num_chunks_retrieved": len(chunks),
             }
-        else:  # full
-            generated, chunks, _ = process_query(question, source_filter=source_filter)
+        else:  # full ou adaptive
+            if mode == "adaptive":
+                generated, chunks, _ = _execute_adaptive(
+                    question, strategy, source_filter=source_filter)
+            else:
+                generated, chunks, _ = process_query(question, source_filter=source_filter)
             chunks = chunks or []
             metrics = evaluate_single(
                 question=question,
@@ -152,8 +231,16 @@ def _evaluate_item(item: dict, mode: str, source_filter: str, use_judge: bool, j
             except Exception as e:
                 logger.warning("Attribution impossible pour « %s » : %s", question, e)
 
+        if mode != "retrieval":
+            metrics["structured_axis_coverage"] = structured_axis_coverage(
+                generated or "", item.get("expected_axes") or [])
+
         metrics["latency_s"] = round(time.time() - t0, 2)
         metrics["status"] = "ok"
+        metrics["policy_version"] = strategy["policy_version"]
+        metrics["query_type"] = item.get("query_type") or strategy["query_type"]
+        metrics["strategy_mode"] = strategy["mode"]
+        metrics["strategy_profile"] = strategy["retrieval"]["profile"]
     except Exception as e:
         logger.exception("Échec évaluation de la question : %s", question)
         metrics = {"question": question, "status": f"error: {e}",
@@ -220,26 +307,30 @@ def _print_regression(previous: dict, agg: dict):
 def main():
     parser = argparse.ArgumentParser(description="Harnais d'évaluation du RAG.")
     parser.add_argument("--dataset", default=str(_DEFAULT_DATASET), help="Chemin du jeu Q/R doré (JSON).")
-    parser.add_argument("--mode", choices=["retrieval", "full", "ragas"], default="retrieval",
+    parser.add_argument("--mode", choices=["retrieval", "full", "ragas", "adaptive", "adaptive_ragas", "deep_ragas"], default="retrieval",
                         help="retrieval = recherche seule (rapide) ; full = pipeline complet ; "
-                             "ragas = pipeline complet + métriques RAGAS par affirmation.")
+                             "ragas = RAG direct + métriques RAGAS ; adaptive = politique Auto ; adaptive_ragas = stratégie choisie + métriques RAGAS ; deep_ragas = Analyse profonde + métriques RAGAS.")
     parser.add_argument("--no-judge", action="store_true",
                         help="Désactive le LLM-as-judge en mode full. Sans effet en mode ragas : "
                              "les métriques RAGAS (par affirmation) requièrent toujours le juge.")
     parser.add_argument("--limit", type=int, default=0, help="N'évalue que les N premières questions (0 = toutes).")
     parser.add_argument("--source-filter", default=None, help="Restreint le retrieval à un document source.")
+    parser.add_argument("--query-type", default=None,
+                        help="N évalue que les items portant ce query_type.")
     parser.add_argument("--no-save", action="store_true", help="Ne sauvegarde pas le run dans MongoDB.")
     parser.add_argument("--name", default=None, help="Nom du run (défaut : horodatage).")
     args = parser.parse_args()
 
     data = _load_dataset(Path(args.dataset))
     items = data["items"]
+    if args.query_type:
+        items = [item for item in items if item.get("query_type") == args.query_type]
     if args.limit > 0:
         items = items[:args.limit]
     source_filter = args.source_filter  # None = recherche sur tout l'index
     # Le mode ragas requiert TOUJOURS le juge (métriques par affirmation) ; --no-judge
     # ne s'applique qu'au mode full.
-    use_judge = (args.mode == "ragas") or (args.mode == "full" and not args.no_judge)
+    use_judge = (args.mode in ("ragas", "adaptive_ragas", "deep_ragas")) or (args.mode in ("full", "adaptive") and not args.no_judge)
     run_name = args.name or f"{args.mode}-{time.strftime('%Y%m%d-%H%M%S')}"
 
     logger.info("Run « %s » : %d questions, mode=%s, judge=%s",
@@ -255,27 +346,51 @@ def main():
     try:
         from core.evaluation import load_eval_runs_from_mongo
         runs = load_eval_runs_from_mongo()
-        # Ne comparer qu'aux runs du MÊME mode (le nom de run est préfixé par le mode)
-        # pour rester apples-to-apples (nb de chunks, métriques disponibles).
-        same_mode = [r for r in runs if (r.get("run_name") or "").startswith(args.mode)]
-        previous = same_mode[0] if same_mode else None
+        dataset_name = data.get("dataset", args.dataset)
+        comparable = [r for r in runs
+                      if (r.get("mode") == args.mode and
+                          r.get("dataset") == dataset_name and
+                          r.get("num_questions") == len(items))]
+        previous = comparable[0] if comparable else None
     except Exception as e:
         logger.warning("Impossible de charger les runs précédents : %s", e)
 
-    results = []
-    for i, item in enumerate(items, 1):
+    workers = max(1, int(os.environ.get("EVAL_QUESTION_CONCURRENCY", "1")))
+    def evaluate_indexed(pair):
+        i, item = pair
         logger.info("  [%d/%d] %s", i, len(items), (item.get("question") or "")[:60])
-        results.append(_evaluate_item(item, args.mode, source_filter, use_judge, judge))
+        return _evaluate_item(item, args.mode, source_filter, use_judge, judge)
+
+    indexed = list(enumerate(items, 1))
+    if workers > 1:
+        # PersistentClient initialise ses bindings Rust paresseusement et cette
+        # première construction n est pas thread-safe. Préchauffage séquentiel.
+        from retrieval.vector_store import get_vector_store
+        get_vector_store().count()
+    if workers == 1:
+        results = [evaluate_indexed(pair) for pair in indexed]
+    else:
+        logger.info("  concurrence inter-questions=%d", workers)
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            results = list(pool.map(evaluate_indexed, indexed))
 
     agg = _aggregate(results)
     _print_report(data.get("dataset", args.dataset), args.mode, results, agg)
+    breakdown = _breakdown(results)
+    print("\n  VENTILATION PAR TYPE DE REQUÊTE :")
+    for category, block in breakdown["by_query_type"].items():
+        a = block["aggregate"]
+        print(f"    {category:<16} n={block['num_questions']:<3} "
+              f"hit={_fmt(a.get('keyword_hit_rate'))} "
+              f"recall={_fmt(a.get('context_recall'))} "
+              f"faith={_fmt(a.get('faithfulness'))}")
     _print_regression(previous, agg)
 
     # Archive l'agrégat hors Mongo (tous modes, dont ragas). Indépendant de la
     # sauvegarde Mongo : la boussole reste lisible même si Mongo est absent.
     try:
         _write_last_eval(_LAST_EVAL_PATH, data.get("dataset", args.dataset),
-                         args.mode, run_name, agg, len(results))
+                         args.mode, run_name, agg, len(results), breakdown=breakdown)
         print(f"\n[archive] Agrégat écrit dans {_LAST_EVAL_PATH}.")
     except Exception as e:
         logger.warning("Écriture de last_eval.json impossible : %s", e)
@@ -286,7 +401,9 @@ def main():
             # save_eval_run_to_mongo recalcule son propre agrégat ; on stocke aussi le nôtre.
             for r in results:
                 r.setdefault("status", "ok")
-            run_id = save_eval_run_to_mongo(results, run_name=run_name)
+            run_id = save_eval_run_to_mongo(
+                results, run_name=run_name, dataset=data.get("dataset", args.dataset),
+                mode=args.mode, breakdown=breakdown)
             print(f"\n[sauvegarde] Run « {run_name} » enregistré dans MongoDB (id={run_id}).")
         except Exception as e:
             logger.warning("Sauvegarde Mongo impossible : %s", e)

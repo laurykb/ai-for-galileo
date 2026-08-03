@@ -103,8 +103,17 @@ def validate_plan(obj, min_steps: int = MIN_PLAN_STEPS,
     return steps[:max_steps], []
 
 
+_PLANNER_INSTRUCTIONS = (
+    "Décompose la demande complexe en recherches documentaires autonomes, "
+    "complémentaires et orientées vers une synthèse finale exhaustive."
+)
+
+
 def _plan_prompt(question: str, history_block: str = "") -> str:
+    from core.prompt_registry import get_prompt
+    instructions = get_prompt("planner.plan", _PLANNER_INSTRUCTIONS)
     return (
+        instructions + "\n\n" +
         "Tu prépares un plan de recherche documentaire pour répondre à une question "
         "complexe sur des documents techniques (cibles de sécurité ANSSI / Critères "
         "Communs). Découpe la question en 2 à 5 sous-questions AUTONOMES : chacune doit "

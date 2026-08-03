@@ -54,7 +54,12 @@ export type Attribution = {
 /** Trames SSE de POST /api/ask. */
 export type AskEvent =
   | { type: "session"; id: string }
-  | { type: "route"; mode: "rag" | "agent"; reason: string }
+  | { type: "route"; mode: "rag" | "agent" | "synth"; reason: string }
+  | { type: "strategy"; policy_version: string; query_type: string; intent: string;
+      mode: "rag" | "agent" | "synth"; requested_mode: string; mode_source: string;
+      signals: string[]; retrieval: { profile: string; parent_child: boolean;
+      parent_child_source: string; self_rag: boolean; self_rag_source: string };
+      verify: boolean; rationale: string[] }
   | { type: "stage"; stage: "retrieve" | "generate" }
   | { type: "retrieved"; chunks: ChunkView[] }
   | { type: "plan"; steps: PlanStep[] }
@@ -66,12 +71,17 @@ export type AskEvent =
   | { type: "observation"; text: string }
   | { type: "token"; text: string }
   | { type: "sources"; citations: Citation[] }
+  | { type: "coverage"; documents: DocumentCoverage; axes?: AxisCoverage }
   | ({ type: "attribution" } & Attribution)
   | { type: "eval"; faithfulness?: number; answer_relevance?: number;
       context_relevance?: number; issues?: string[];
       n_affirmations?: number; n_sourcees?: number; n_non_sourcees?: number }
   | { type: "done"; found: boolean }
   | { type: "error"; message: string };
+
+export type DocumentCoverage = { attempted: number; with_evidence: number; ratio: number | null;
+  documents_with_evidence: string[]; documents_without_evidence: string[] };
+export type AxisCoverage = { checked: boolean; missing: string[]; repair_attempts: number };
 
 export type EvalResult = { faithfulness?: number | null; answer_relevance?: number | null;
                            context_relevance?: number | null; issues?: string[];
@@ -100,4 +110,6 @@ export type ChatMessage = {
   eval?: EvalResult;
   /** Attribution par affirmation (passe post-hoc, persistée en session). */
   attribution?: Attribution;
+  documentCoverage?: DocumentCoverage;
+  axisCoverage?: AxisCoverage;
 };

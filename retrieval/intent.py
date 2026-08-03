@@ -15,9 +15,10 @@ def _norm(text: str) -> str:
 
 # Agrégation corpus-large : « toutes les X », « catégorise », « du corpus »...
 _AGGREGATE = re.compile(
-    r"\b(tous les|toutes les|l'ensemble des|chaque (document|attaque|menace|exigence|"
+    r"\b(tous les|tout les|toutes les|toute les|l'ensemble des|chaque (document|attaque|menace|exigence|"
     r"categorie)|recense|inventaire|categorise|categoriser|enumere|enumerer|"
     r"classe (les|toutes|tous)|liste[- ](moi|nous|les|toutes|tous|l')|"
+    r"exhaustif|exhaustive|exhaustivement|sources? de risques?.*objectifs?|target objectives?|types? d.attaquants?|"
     r"dans tout le corpus|sur tout le corpus|(de|du|dans le) corpus|"
     r"a travers (les|tous|toutes))")
 

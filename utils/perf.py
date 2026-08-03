@@ -66,3 +66,28 @@ def gpu_memory() -> list[tuple[float, float]]:
         return gpus
     except Exception:
         return []
+
+
+def hardware_profile() -> dict:
+    """Profil central utilisé par l API et les diagnostics de concurrence."""
+    gpus = gpu_memory()
+    total_mib = int(sum(total for _used, total in gpus))
+    if len(gpus) >= 2 and total_mib >= 80 * 1024:
+        name, slots = "dual_high_vram", 4
+    elif total_mib >= 32 * 1024:
+        name, slots = "high_vram", 2
+    else:
+        name, slots = "constrained", 1
+    return {
+        "name": name, "gpu_count": len(gpus), "total_vram_mib": total_mib,
+        "recommendations": {
+            "ollama_sched_spread": len(gpus) >= 2,
+            "ollama_num_parallel": slots,
+            "ollama_max_loaded_models": 4 if name == "dual_high_vram" else 2,
+            "corpus_map_concurrency": slots,
+            "ragas_judge_concurrency": slots,
+            "eval_question_concurrency": 2 if name == "dual_high_vram" else 1,
+            "enhance_max_workers": slots,
+            "ce_device": "cuda:0" if gpus else "cpu",
+        },
+    }

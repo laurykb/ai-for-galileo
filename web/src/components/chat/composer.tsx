@@ -7,9 +7,9 @@
 
 import type { RefObject } from "react";
 
-import { Dot } from "@/components/ui";
+import { Dot, Hint } from "@/components/ui";
 
-export type Mode = "auto" | "rag" | "agent";
+export type Mode = "auto" | "rag" | "agent" | "deep";
 
 /** Indexation d'une pièce jointe en cours : { name, pct, step }. */
 export type AttachState = { name: string; pct: number; step: string };
@@ -136,18 +136,22 @@ export function Composer({
               </button>
             )}
             {models.length > 0 && (
-              <select
-                value={genModel}
-                onChange={(e) => onLoadModel(e.target.value)}
-                disabled={busy}
-                aria-label="Modèle de génération"
-                title="Modèle de génération : changé à chaud et épinglé en VRAM. Sert aux prochaines réponses."
-                className="max-w-44 cursor-pointer rounded-lg border border-edge bg-surface px-2 py-1 font-mono text-[11px] text-fg-muted focus:outline-none"
-              >
-                {(models.includes(genModel) ? models : [genModel, ...models]).map((m) => (
-                  <option key={m} value={m}>{m}</option>
-                ))}
-              </select>
+              <div className="flex items-center gap-1">
+                <span className="text-[11px] text-fg-faint">Réponse finale</span>
+                <Hint text="Choisit uniquement le modèle qui rédige la réponse finale. Les modèles d’orchestration, de recherche, d’extraction, de synthèse et d’évaluation restent ceux définis dans Réglages du chat." />
+                <select
+                  value={genModel}
+                  onChange={(e) => onLoadModel(e.target.value)}
+                  disabled={busy}
+                  aria-label="Modèle de génération de la réponse finale"
+                  title="Modèle de génération de la réponse finale : changé à chaud et épinglé en VRAM."
+                  className="max-w-44 cursor-pointer rounded-lg border border-edge bg-surface px-2 py-1 font-mono text-[11px] text-fg-muted focus:outline-none"
+                >
+                  {(models.includes(genModel) ? models : [genModel, ...models]).map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+              </div>
             )}
             {modelStatus && (
               <span className={`text-[11px] ${modelStatus === "chargé" ? "text-good"
@@ -155,18 +159,19 @@ export function Composer({
                 {modelStatus}
               </span>
             )}
-            {expert && (
+            {(
               <select
                 value={mode}
                 onChange={(e) => setMode(e.target.value as Mode)}
                 disabled={busy}
                 aria-label="Mode de traitement"
-                title="Auto : un routeur choisit RAG ou Agent selon la question. Agent : raisonnement multi-étapes (plus lent)."
+                title="Auto : stratégie équilibrée. Analyse profonde : couverture exhaustive et raisonnement long, potentiellement plusieurs minutes."
                 className="cursor-pointer rounded-lg border border-edge bg-surface px-2 py-1 text-[11px] text-fg-muted focus:outline-none"
               >
                 <option value="auto">Auto</option>
-                <option value="rag">RAG</option>
-                <option value="agent">Agent</option>
+                <option value="deep">Analyse profonde</option>
+                {expert && <option value="rag">RAG</option>}
+                {expert && <option value="agent">Agent</option>}
               </select>
             )}
             {busy ? (

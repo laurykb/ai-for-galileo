@@ -173,6 +173,16 @@ export function Chat() {
           draft.route = `${ev.mode.toUpperCase()} — ${ev.reason}`;
           setRoute(draft.route);
           if (ev.mode === "agent") setPhase("agent");
+        } else if (ev.type === "strategy") {
+          const options = [
+            ev.retrieval.profile,
+            ev.retrieval.parent_child ? "Parent-Child" : null,
+            ev.retrieval.self_rag ? "Self-RAG" : null,
+            ev.verify ? "contrôle renforcé" : null,
+          ].filter(Boolean).join(" · ");
+          const origin = ev.mode_source === "expert_override" ? "expert" : "auto";
+          draft.route = `${ev.mode.toUpperCase()} [${origin}] — ${ev.query_type} · ${options}`;
+          setRoute(draft.route);
         } else if (ev.type === "stage" && ev.stage === "generate") setPhase("generate");
         else if (ev.type === "retrieved") {
           chunks = ev.chunks;
@@ -322,7 +332,7 @@ export function Chat() {
         // d.chunks = la sélection APRÈS affinage pré-génération : c'est la
         // liste numérotée [1..n] du contexte (contrat marqueur↔passage).
         next[i] = { ...next[i], content: d.answer, citations: d.citations,
-                    chunks: d.chunks ?? selectedChunks, eval: undefined,
+                    chunks: d.chunks ?? selectedChunks, eval: d.eval ?? undefined,
                     attribution: undefined };
         return next;
       });

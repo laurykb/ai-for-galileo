@@ -1,5 +1,5 @@
 # tests/test_synthesize_corpus.py
-from core.synthesize_corpus import synthesize_corpus
+from core.synthesize_corpus import synthesize_corpus, _document_coverage
 
 
 def test_pipeline_emits_glassbox_events_and_reduces(monkeypatch):
@@ -42,6 +42,20 @@ def test_pipeline_emits_glassbox_events_and_reduces(monkeypatch):
     assert "[src: b.md]" in done["result"]["answer"]
 
 
+def test_document_coverage_distinguishes_evidence_and_empty_documents():
+    coverage = _document_coverage(
+        ["a.md", "b.md", "c.md"],
+        [{"document": "a.md", "items": ["fait"]},
+         {"document": "b.md", "items": []},
+         {"document": "c.md", "items": []}],
+    )
+    assert coverage == {
+        "attempted": 3, "with_evidence": 1, "ratio": 1 / 3,
+        "documents_with_evidence": ["a.md"],
+        "documents_without_evidence": ["b.md", "c.md"],
+    }
+
+
 def test_pipeline_no_relevant_docs(monkeypatch):
     events = list(synthesize_corpus("q", aspect="x", llm=lambda p: "",
                                     prefilter=lambda a: [], extract=lambda d, a: None))
@@ -77,6 +91,8 @@ def test_map_error_isolated(monkeypatch):
     assert done["type"] == "done"
     assert set(done["result"]["documents"]) == {"broken.md", "b.md"}
     assert done["result"]["n_items"] == 1
+    assert done["result"]["document_coverage"]["ratio"] == 0.5
+    assert done["result"]["document_coverage"]["documents_without_evidence"] == ["broken.md"]
     assert "Injection SQL" in done["result"]["answer"]
 
 
@@ -119,3 +135,106 @@ def test_reduce_batched_when_material_large(monkeypatch):
     assert set(done["result"]["documents"]) == set(docs)
     assert done["result"]["n_items"] == n_docs
     assert done["result"]["answer"].strip() != ""
+
+
+def test_structured_aggregate_decomposes_axes_and_requires_table(monkeypatch):
+    monkeypatch.setenv("CORPUS_MAP_CONCURRENCY", "1")
+    question = ("Sur tous les documents, identifie les catégories de sources de risque, "
+                "les sources de risque, les catégories d objectif visé et les objectifs "
+                "visés. Sois exhaustif et sors une table des types d attaquants.")
+    extracted_aspects = []
+    prompts = []
+    def extract(document, aspect):
+        extracted_aspects.append(aspect)
+        return {"document": document, "items": [
+            "sources de risque | acteur étatique | État hostile | capacités avancées | perturbation du service"], "raw": ""}
+    def llm(prompt):
+        prompts.append(prompt)
+        return "| Axe | Catégorie | Élément | Caractérisation | Objectif lié | Sources |"
+    events = list(synthesize_corpus(question, prefilter=lambda _: ["a.md"],
+                                    extract=extract, llm=llm,
+                                    coverage_check=lambda answer, dimensions: []))
+    stage = events[0]
+    assert stage["structured"] is True
+    assert "sources de risque" in stage["dimensions"]
+    assert "objectifs visés" in stage["dimensions"]
+    assert "types d attaquants ou acteurs de menace" in stage["dimensions"]
+    assert "AXES OBLIGATOIRES" in extracted_aspects[0]
+    assert "TABLEAU MARKDOWN" in prompts[0]
+    assert "Couverture" in prompts[0]
+
+def test_regular_synthesis_keeps_default_output_contract(monkeypatch):
+    monkeypatch.setenv("CORPUS_MAP_CONCURRENCY", "1")
+    prompts = []
+    events = list(synthesize_corpus(
+        "Quelles sont les menaces ?", aspect="menaces",
+        prefilter=lambda _: ["a.md"],
+        extract=lambda d, a: {"document": d, "items": ["x"], "raw": ""},
+        llm=lambda p: prompts.append(p) or "x"))
+    assert events[0]["structured"] is False
+    assert "TABLEAU MARKDOWN" not in prompts[0]
+
+
+def test_structured_coverage_repairs_once(monkeypatch):
+    import env_config
+    monkeypatch.setattr(env_config, "COVERAGE_REPAIR_ENABLED", True)
+    monkeypatch.setenv("CORPUS_MAP_CONCURRENCY", "1")
+    question = ("Catégorise toutes les sources de risque et tous les objectifs visés "
+                "dans une table exhaustive.")
+    extract_calls = []
+    def extract(document, aspect):
+        extract_calls.append(aspect)
+        item = ("objectifs visés | service | interruption | impact | INCONNU"
+                if aspect.startswith("COMPLÉMENT") else
+                "sources de risque | État | acteur hostile | capacité | INCONNU")
+        return {"document": document, "items": [item], "raw": ""}
+    llm_calls = []
+    def llm(prompt):
+        llm_calls.append(prompt)
+        return "table corrigée [src: a.md]"
+    checks = {"n": 0}
+    def coverage(answer, dimensions):
+        checks["n"] += 1
+        return ["objectifs visés"] if checks["n"] == 1 else []
+    events = list(synthesize_corpus(question, prefilter=lambda _: ["a.md"],
+                                    extract=extract, llm=llm,
+                                    coverage_check=coverage))
+    repairs = [e for e in events if e["type"] == "stage" and e["stage"] == "repair"]
+    assert len(repairs) == 1 and repairs[0]["max_attempts"] == 1
+    assert len(extract_calls) == 2
+    assert extract_calls[1].startswith("COMPLÉMENT CIBLÉ")
+    done = events[-1]["result"]
+    assert done["coverage"] == {"checked": True, "missing": [], "repair_attempts": 1}
+    assert done["n_items"] == 2
+
+def test_structured_coverage_can_be_disabled(monkeypatch):
+    import env_config
+    monkeypatch.setattr(env_config, "COVERAGE_REPAIR_ENABLED", False)
+    question = "Catégorise toutes les sources de risque et tous les objectifs visés."
+    events = list(synthesize_corpus(
+        question, prefilter=lambda _: ["a.md"],
+        extract=lambda d, a: {"document": d, "items": ["fait"], "raw": ""},
+        llm=lambda p: "réponse [src: a.md]",
+        coverage_check=lambda *_: (_ for _ in ()).throw(AssertionError("judge appelé")),
+    ))
+    coverage = events[-1]["result"]["coverage"]
+    assert coverage["checked"] is False
+    assert coverage["repair_attempts"] == 0
+    assert coverage["disabled_reason"] == "configuration"
+    assert any(e.get("stage") == "coverage" and e.get("disabled") for e in events)
+
+
+def test_parse_missing_axes_rejects_unrequested_values():
+    from core.synthesize_corpus import _parse_missing_axes
+    dims = ["sources de risque", "objectifs visés"]
+    raw = "préfixe {\"missing\": [\"objectifs visés\", \"axe inventé\"]} suffixe"
+    assert _parse_missing_axes(raw, dims) == ["objectifs visés"]
+
+
+def test_default_coverage_prompt_formats_and_parses_json():
+    from core.synthesize_corpus import _judge_coverage
+    prompts = []
+    missing = _judge_coverage("Analyse", ["Acteurs", "Objectifs"],
+                              llm=lambda prompt: prompts.append(prompt) or "{\"missing\": [\"Objectifs\"]}")
+    assert missing == ["Objectifs"]
+    assert "{\"missing\"" in prompts[0]

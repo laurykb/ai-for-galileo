@@ -5,7 +5,7 @@
  * loger sous le A de THALES (elle DEVIENT le point aqua du logo), les lettres
  * apparaissent, l'accueil se révèle.
  *
- * Jouée à CHAQUE retour à l'accueil, passée d'un clic,
+ * Jouée une fois par session, passée d’un clic,
  * `prefers-reduced-motion` : pas d'animation du tout. */
 
 import { useEffect, useRef, useState } from "react";
@@ -61,9 +61,14 @@ export function Intro({ onDone }: { onDone?: () => void } = {}) {
 
   useEffect(() => {
     const timers: ReturnType<typeof setTimeout>[] = [];
-    // Décision différée d'un tick (la règle set-state-in-effect n'aime pas
+    // Décision différée d’un tick (la règle set-state-in-effect n’aime pas
     // les setState synchrones, même pour un choix ne dépendant pas du rendu).
     timers.push(setTimeout(() => {
+      if (window.sessionStorage.getItem("ai-for-ssh:intro-seen")) {
+        setShow(false);
+        return;
+      }
+      window.sessionStorage.setItem("ai-for-ssh:intro-seen", "true");
       const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
       if (reduced) {
         setShow(false);

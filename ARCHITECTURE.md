@@ -2,7 +2,7 @@
 
 Carte de lecture du dépôt. Objectif : qu'un ingénieur situe **où vit quoi** en
 une page, sans lire tous les docstrings. Application **100 % locale, mono-poste**
-(Ollama + MongoDB + Chroma) : un **RAG documentaire** sur cibles de sécurité.
+(Ollama + MongoDB + Chroma) : un **RAG documentaire adaptatif** conçu pour les analyses structurées multi-documentaires.
 
 ## Les trois couches
 
@@ -50,16 +50,34 @@ moteur ; `api/` ne fait que le présenter — il ne le duplique pas.
    sémantique (Chroma) + BM25 en parallèle → fusion `retrieval/rrf.py` → rerank
    `retrieval/cross_encoder.py` (bge-reranker, `models/`) → `parent_child` →
    `context_refine`.
-3. **Génération** — `core/llm_answer.py` (Ollama, streaming, citations). Couches
-   optionnelles : `core/self_rag.py`, `core/planner.py` + `core/agent.py` (ReAct),
-   `core/router.py` + `core/model_router.py`, `core/attribution.py`.
+3. **Décision** — `core/router.py` classe la requête et sélectionne RAG, synthèse corpus ou Agent. `Analyse profonde` reste un choix explicite.
+4. **Génération** — `core/llm_answer.py` sert le RAG standard; `core/corpus_extract.py` et `core/synthesize_corpus.py` servent le MAP/REDUCE; `core/agent.py` sert l’agent. `core/model_router.py` route chaque rôle LLM.
+5. **Qualité** — couverture, métriques et stratégie sont diffusées en SSE. `core/evaluation.py` et `evals/run_eval.py` assurent les évaluations RAGAS locales.
+
+## Surfaces UI
+
+- **Chat** : Auto, RAG/Agent en mode Expert et Analyse profonde; le modèle de la barre désigne uniquement la rédaction finale.
+- **Informations** : sources, couverture et métriques.
+- **Agents** : prompts effectifs, versions, restauration et tests A/B.
+- **Réglages** : routage par rôle et paramètres experts.
+- **Méthode SRA** : génération d une table Risk Objectives éditable et exportable en CSV/XLSX.
+
+État détaillé de reprise : `docs/PROJECT_STATE.md`.
+
+## Module SRA
+
+SRA est une verticale métier native du moteur partagé, pas un pipeline parallèle. `core/sra/` fournit le contrat RO et le MAP spécialisé ; l orchestration réutilise la phase MAP concurrente de `core/synthesize_corpus.py`, le routage `extract`, les preuves, les sources et l observabilité. `api/sra.py` expose les dossiers, la génération SSE, l édition et les exports CSV/XLSX ; l interface réside sous `web/src/app/sra/`. Le Chat reste la surface généraliste du même socle et SRA sa surface métier spécialisée. Pour les étapes RO et TO, SRA utilise exclusivement une Analyse profonde par balayage MAP exhaustif, suivie d une consolidation déterministe sans résumé LLM destructif. Chaque génération persiste une trace métier : documents, fenêtres, candidats RO, consolidation et couverture.
 
 ## Stockage
 
-- **MongoDB** — chunks, index BM25 sérialisé, sessions de conversation.
+- **MongoDB** — chunks, index BM25 sérialisé, sessions de conversation, dossiers SRA (`sra_projects`).
 - **Chroma** — vecteurs (embeddings bge-m3).
 - **`models/`** — poids du cross-encoder (gitignoré, local).
 - **Ollama** — génération (`mistral-small3.2`) + embeddings (`bge-m3`).
 
 > `data/`, `models/`, `web/.next`, `web/node_modules`, `.venv` sont
 > **gitignorés** : ce sont des états runtime, pas des sources à relire.
+
+### SRA — étape TO
+
+La table TO est une matrice de relations entre les RO Types canoniques retenus à l’étape RO et les cibles potentielles attestées par le corpus d’architecture dédié `docs/PDF_TO`. Une ligne représente un couple RO Type → cible et conserve séparément la justification analytique du croisement et les citations prouvant l’existence ou le rôle de la cible. La génération refuse de démarrer si la table RO est absente ou si l’un des trois documents TO n’est pas indexé.
