@@ -15,6 +15,7 @@ import ReactMarkdown from "react-markdown";
 
 import { API_BASE, getJSON, type SourcesResponse } from "@/lib/api";
 import { streamAsk } from "@/lib/sse";
+import { listArtifacts, type SraArtifact } from "@/lib/sra";
 import { loadPrefs } from "@/lib/prefs";
 import { useEngineHealth, useElapsedLabel } from "@/lib/use-health";
 import type { ChatMessage, ChunkView, PlanStep, SessionInfo } from "@/lib/types";
@@ -43,6 +44,8 @@ type PlanView = { steps: PlanStep[]; statuts: StepStatus[]; replanned: boolean }
 export function Chat() {
   const [docs, setDocs] = useState<{ name: string; chunks: number }[]>([]);
   const [selected, setSelected] = useState<string>("");
+  const [artifacts, setArtifacts] = useState<SraArtifact[]>([]);
+  const [selectedArtifacts, setSelectedArtifacts] = useState<string[]>([]);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -94,6 +97,7 @@ export function Chat() {
     const t = setTimeout(() => {
       refreshDocs();
       refreshSessions();
+      listArtifacts().then((s) => setArtifacts(s.artifacts)).catch(() => setArtifacts([]));
       getJSON<{ models: string[]; routing: Record<string, string> }>("/api/models")
         .then((m) => { setModels(m.models); setGenModel(m.routing?.generate ?? m.models[0] ?? ""); })
         .catch(() => setModels([]));
@@ -121,6 +125,7 @@ export function Chat() {
     setSessionId(null);
     setMessages([]);
     setSelected("");
+    setSelectedArtifacts([]);
   };
 
   const openSession = async (s: SessionInfo) => {
@@ -166,6 +171,7 @@ export function Chat() {
         question: q, source: selected || null, history,
         parent_child: prefs.parentChild, self_rag: prefs.selfRag,
         system_prompt: prefs.systemPrompt, mode, session_id: sessionId,
+        artifact_revision_ids: selectedArtifacts,
       }, (ev) => {
         if (ev.type === "session") {
           setSessionId(ev.id);
@@ -291,7 +297,7 @@ export function Chat() {
     setAgentTrace([]);
     setPlan(null);
     setPhase("idle");
-  }, [busy, messages, selected, mode, sessionId, refreshSessions]);
+  }, [busy, messages, selected, selectedArtifacts, mode, sessionId, refreshSessions]);
 
   // Index du dernier message utilisateur (siège du bouton « modifier »).
   const lastUserIndex = messages.reduce(
@@ -592,6 +598,22 @@ export function Chat() {
               Annuler
             </button>
           </div>
+        )}
+        {artifacts.length > 0 && (
+          <details className="mb-2 rounded-xl border border-border bg-surface-2 px-3 py-2 text-xs">
+            <summary className="cursor-pointer font-medium text-foreground">
+              Analyses SRA à interroger{selectedArtifacts.length ? " (" + selectedArtifacts.length + ")" : ""}
+            </summary>
+            <p className="mt-2 text-fg-muted">Sélectionnez une ou plusieurs versions pour les questionner ou les comparer dans le Chat.</p>
+            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+              {artifacts.map((artifact) => (
+                <label key={artifact.revision_id} className="flex cursor-pointer items-center gap-2 rounded-lg border border-border px-2 py-2">
+                  <input type="checkbox" checked={selectedArtifacts.includes(artifact.revision_id)} onChange={() => setSelectedArtifacts((current) => current.includes(artifact.revision_id) ? current.filter((id) => id !== artifact.revision_id) : [...current, artifact.revision_id])} />
+                  <span>{artifact.label}</span>
+                </label>
+              ))}
+            </div>
+          </details>
         )}
         <Composer
           input={input} setInput={setInput}

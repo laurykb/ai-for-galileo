@@ -4,12 +4,14 @@ export type RiskObjective = {
   attacker_category: string;
   targeted_objectives: string;
 };
-export type RiskOriginType = {
+export type ReviewStatus = "proposed" | "accepted" | "rejected" | "modified";
+export type ReviewFields = { review_status?: ReviewStatus; review_comment?: string; reviewed_at?: string | null; reviewed_by?: string | null };
+export type RiskOriginType = ReviewFields & {
   ro_type_id: string; canonical_type: string; definition: string;
   observed_instances: string[]; characterization: string[];
   evidence: Array<{ source: string; quote: string }>;
 };
-export type TargetObjectiveRelation = {
+export type TargetObjectiveRelation = ReviewFields & {
   to_id: string; ro_type_id: string; ro_canonical_type: string;
   target_name: string; target_category: string; rationale: string;
   evidence: Array<{ source: string; quote: string }>;
@@ -20,7 +22,8 @@ export type TargetObjectivesTable = {
   target_objectives: TargetObjectiveRelation[]; warnings: string[];
   trace: Array<Record<string, unknown>>; generated_at: string;
 };
-export type AmbiguousCandidate = {
+export type AmbiguousCandidate = ReviewFields & {
+  candidate_id?: string;
   extracted_category: string; characterization: string; source: string;
   evidence: string; reason: string;
 };
@@ -53,7 +56,13 @@ export type SraProject = {
   created_at: string;
   table: RiskObjectivesTable | null;
   target_objectives_table?: TargetObjectivesTable | null;
+  archived?: boolean; active_ro_revision_id?: string; active_to_revision_id?: string;
+  generation_jobs?: Record<string, Record<string, unknown>>;
 };
+export type SraArtifact = { revision_id: string; project_id: string; project_name: string; kind: "ro" | "to"; sequence: number; created_at: string; label: string };
+export type SraRevision = SraArtifact & { reason: string; parent_revision_id?: string };
+export type RevisionComparison = { kind: "ro" | "to"; added: unknown[]; removed: unknown[]; changed: Array<{ before: unknown; after: unknown }> };
+
 export type GenerateEvent =
   | ({ type: "stage"; stage: string; document?: string } & Record<string, unknown>)
   | { type: "table"; table: RiskObjectivesTable }
@@ -76,6 +85,11 @@ async function send<T>(path: string, method: string, body?: unknown): Promise<T>
 
 export const listProjects = () =>
   getJSON<{ projects: SraProject[] }>("/api/sra/projects");
+export const listArtifacts = () => getJSON<{ artifacts: SraArtifact[] }>("/api/sra/artifacts");
+export const listRevisions = (id: string, kind?: "ro" | "to") => getJSON<{ revisions: SraRevision[] }>("/api/sra/projects/" + id + "/revisions" + (kind ? "?kind=" + kind : ""));
+export const compareRevisions = (left: string, right: string) => getJSON<RevisionComparison>("/api/sra/revisions/compare/" + left + "/" + right);
+export const patchProject = (id: string, patch: { name?: string; archived?: boolean }) => send<SraProject>("/api/sra/projects/" + id, "PATCH", patch);
+export const duplicateProject = (id: string, name?: string) => send<SraProject>("/api/sra/projects/" + id + "/duplicate", "POST", { name });
 export const getProject = (id: string) =>
   getJSON<SraProject>(`/api/sra/projects/${id}`);
 export const createProject = (name: string, document_ids: string[]) =>

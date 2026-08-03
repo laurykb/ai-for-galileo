@@ -51,6 +51,15 @@ class CreateProjectBody(BaseModel):
     document_ids: List[str] = []
 
 
+class PatchProjectBody(BaseModel):
+    name: str | None = None
+    archived: bool | None = None
+
+
+class DuplicateProjectBody(BaseModel):
+    name: str | None = None
+
+
 class PutDocumentsBody(BaseModel):
     document_ids: List[str]
 
@@ -83,13 +92,56 @@ def create_project(body: CreateProjectBody):
 
 
 @router.get("/api/sra/projects")
-def list_projects():
-    return {"projects": _repo().list_projects()}
+def list_projects(include_archived: bool = False):
+    return {"projects": _repo().list_projects(include_archived=include_archived)}
+
+
+@router.get("/api/sra/artifacts")
+def list_artifacts():
+    return {"artifacts": _repo().list_artifacts()}
 
 
 @router.get("/api/sra/projects/{project_id}")
 def get_project(project_id: str):
     return _project_or_404(_repo(), project_id)
+
+
+@router.patch("/api/sra/projects/{project_id}")
+def patch_project(project_id: str, body: PatchProjectBody):
+    repo = _repo(); _project_or_404(repo, project_id)
+    if body.name is not None and not body.name.strip():
+        raise HTTPException(400, "Nom de dossier requis")
+    return repo.update_project(project_id, name=body.name, archived=body.archived)
+
+
+@router.post("/api/sra/projects/{project_id}/duplicate")
+def duplicate_project(project_id: str, body: DuplicateProjectBody):
+    repo = _repo(); _project_or_404(repo, project_id)
+    return repo.duplicate_project(project_id, body.name)
+
+
+@router.get("/api/sra/projects/{project_id}/revisions")
+def list_revisions(project_id: str, kind: str | None = None):
+    repo = _repo(); _project_or_404(repo, project_id)
+    if kind not in {None, "ro", "to"}:
+        raise HTTPException(400, "Type de révision inconnu")
+    return {"revisions": repo.list_revisions(project_id, kind)}
+
+
+@router.get("/api/sra/revisions/{revision_id}")
+def get_revision(revision_id: str):
+    revision = _repo().get_revision(revision_id)
+    if not revision:
+        raise HTTPException(404, "Révision SRA inconnue")
+    return revision
+
+
+@router.get("/api/sra/revisions/compare/{left_id}/{right_id}")
+def compare_revisions(left_id: str, right_id: str):
+    try:
+        return _repo().compare_revisions(left_id, right_id)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 @router.put("/api/sra/projects/{project_id}/documents")
@@ -178,7 +230,7 @@ def generate(project_id: str):
             if "error" in result:
                 yield _sse({"type": "error", "message": result["error"]})
                 return
-            project_doc = repo.save_table(project_id, result["table"])
+            project_doc = repo.save_table(project_id, result["table"], reason="generation")
             yield _sse({"type": "table", "table": project_doc["table"]})
             yield _sse({"type": "done"})
         finally:
@@ -266,7 +318,7 @@ def generate_target_objectives_route(project_id: str):
                 yield _sse({"type": "stopped", "message": "Génération TO arrêtée"}); return
             if "error" in result:
                 yield _sse({"type": "error", "message": result["error"]}); return
-            project_doc = repo.save_target_objectives_table(project_id, result["table"])
+            project_doc = repo.save_target_objectives_table(project_id, result["table"], reason="generation")
             yield _sse({"type": "target_objectives_table", "table": project_doc["target_objectives_table"]})
             yield _sse({"type": "done"})
         finally:

@@ -114,3 +114,13 @@ La phase RAG générique est gelée. Le propriétaire a décidé de ne pas pours
 3. Conserver le flux simple : documents → RO Types → revue humaine → CSV/XLSX → Target Objectives optionnels.
 4. Ne pas réintroduire d ateliers ou de gabarit contractuel sans décision produit.
 4. Ne pas réactiver la réparation de couverture, lancer Analyse profonde ou la matrice exhaustive rôle × modèle sans nouvelle décision.
+
+
+## Évolutions UX et métier — août 2026
+
+- La page d accueil sépare clairement le Chat documentaire et la Méthode SRA ; le tutoriel a été volontairement retiré tant que le produit évolue rapidement.
+- Les tables RO et TO disposent d une revue humaine explicite : statut, commentaire, édition et preuves consultables.
+- Chaque génération et chaque sauvegarde de revue crée une révision immuable ; le dossier conserve un pointeur vers la version active.
+- Les dossiers peuvent être dupliqués ou archivés et leur historique est visible dans l espace SRA.
+- Le Chat peut recevoir une ou plusieurs révisions SRA comme contexte traçable, notamment pour interroger ou comparer des outputs.
+- Les API exposent la liste, la lecture et la comparaison déterministe des révisions ainsi que les artefacts actifs.

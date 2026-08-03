@@ -17,6 +17,7 @@ export async function streamAsk(
     system_prompt?: string | null;
     mode?: string;
     session_id?: string | null;
+    artifact_revision_ids?: string[];
   },
   onEvent: (ev: AskEvent) => void,
   signal?: AbortSignal,

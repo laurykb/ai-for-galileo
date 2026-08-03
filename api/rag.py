@@ -89,6 +89,7 @@ class AskBody(BaseModel):
     system_prompt: str | None = None
     mode: str = "auto"                # auto | rag | agent | synth
     session_id: str | None = None
+    artifact_revision_ids: list[str] = []
 
 
 def _persist_exchange(session_id: str | None, source: str | None, question: str,
@@ -223,6 +224,26 @@ def ask(body: AskBody) -> StreamingResponse:
                     yield _sse({"type": "session", "id": session_id})
                 except Exception:
                     session_id = None  # Mongo down : conversation éphémère
+
+            if body.artifact_revision_ids:
+                from core.sra.repository import SraRepository
+                from core.llm_answer import answer_stream
+                chunks = SraRepository().artifact_chunks(body.artifact_revision_ids)
+                yield _sse({"type": "route", "mode": "sra", "reason": "Révisions SRA sélectionnées"})
+                yield _sse({"type": "retrieved", "chunks": [_trim_chunk(c) for c in chunks]})
+                if not chunks:
+                    yield _sse({"type": "done", "found": False})
+                    return
+                token_gen, citations = answer_stream(body.question, chunks, system_prompt=body.system_prompt or None, conversation_history=body.history or [], already_refined=True)
+                yield _sse({"type": "stage", "stage": "generate"})
+                answer_txt = ""
+                for token in token_gen:
+                    answer_txt += token
+                    yield _sse({"type": "token", "text": token})
+                yield _sse({"type": "sources", "citations": citations or []})
+                _persist_exchange(session_id, None, body.question, answer_txt, citations or [], None, chunks)
+                yield _sse({"type": "done", "found": True})
+                return
 
             from core.router import select_query_strategy
             strategy = select_query_strategy(

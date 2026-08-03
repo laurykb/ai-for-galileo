@@ -7,7 +7,7 @@ import { TargetObjectivesPanel } from "@/components/sra/target-objectives-panel"
 import { getJSON, SourcesResponse } from "@/lib/api";
 import {
   RiskObjectivesTable, SraGenerationConfig, SraProject, createProject, exportTable,
-  generateRiskObjectives, getProject, listProjects, saveTable, stopGeneration, updateDocuments, updateGenerationConfig,
+  generateRiskObjectives, getProject, listProjects, listRevisions, duplicateProject, patchProject, saveTable, stopGeneration, updateDocuments, updateGenerationConfig,
 } from "@/lib/sra";
 
 const QUALITY_CONFIG: SraGenerationConfig = { profile: "quality", extraction_model: "qwen3.5:latest", adjudication_model: "deepseek-r1:32b", finalization_model: "mistral-small3.2:latest", finalization_enabled: false, map_batch_chars: 24000, map_batch_overlap: 1500, adjudication_batch_chars: 18000, adjudication_retries: 1 };
@@ -46,6 +46,7 @@ export function SraView() {
   const [stage, setStage] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [trace, setTrace] = useState<string[]>([]);
+  const [revisions, setRevisions] = useState<Array<{ revision_id: string; kind: "ro" | "to"; sequence: number; reason: string; created_at: string }>>([]);
 
   const refresh = useCallback(async (projectId?: string) => {
     const [projectList, sourceList, modelList] = await Promise.all([
@@ -66,6 +67,7 @@ export function SraView() {
       setSelectedDocs(project.document_ids);
       setGenerationConfig(project.generation_config ?? QUALITY_CONFIG);
       setDirty(false);
+      listRevisions(projectId).then((result) => setRevisions(result.revisions)).catch(() => setRevisions([]));
     }
   }, []);
 
@@ -122,6 +124,12 @@ export function SraView() {
     setDirty(true);
   };
 
+  const patchRoType = (index: number, patch: Record<string, unknown>) => {
+    if (!table?.risk_origin_types) return;
+    setTable({ ...table, risk_origin_types: table.risk_origin_types.map((row, rowIndex) => rowIndex === index ? { ...row, ...patch } : row) });
+    setDirty(true);
+  };
+
   const removeRow = (index: number) => {
     if (!table) return;
     setTable({
@@ -167,6 +175,7 @@ export function SraView() {
             </button>
           ))}
         </div>
+        {current && <div className="mt-3 flex flex-wrap gap-2"><button className="rounded border border-edge px-3 py-1 text-sm" onClick={() => void run("duplicate", async () => { const clone = await duplicateProject(current.project_id); await refresh(clone.project_id); })}>Dupliquer ce dossier</button><button className="rounded border border-edge px-3 py-1 text-sm" onClick={() => void run("archive", async () => { await patchProject(current.project_id, { archived: true }); setCurrent(null); setTable(null); await refresh(); })}>Archiver</button></div>}
         <div className="mt-3 flex gap-2">
           <input className="flex-1 rounded border border-edge bg-transparent px-2 py-1 text-sm"
             placeholder="Nom du nouveau dossier" value={newName}
@@ -178,6 +187,7 @@ export function SraView() {
 
       {current && (
         <>
+          {revisions.length > 0 && <Panel><PanelTitle kicker="Traçabilité" title="Historique des versions" hint="Chaque génération ou revue sauvegardée reste consultable et comparable via son identifiant." /><ol className="mt-3 space-y-2 text-sm">{revisions.map((revision) => <li key={revision.revision_id} className="flex justify-between border-b border-edge pb-2"><span>{revision.kind.toUpperCase()} v{revision.sequence} · {revision.reason}</span><span className="text-fg-muted">{new Date(revision.created_at).toLocaleString("fr-FR")}</span></li>)}</ol></Panel>}
           <Panel>
             <PanelTitle kicker="Configuration du dossier SRA" title="Modèles et stratégie de génération" hint="Réglages persistés avec le dossier et réutilisables par les futures tables SRA." />
             <div className="mt-3 grid gap-3 md:grid-cols-2">
@@ -255,15 +265,15 @@ export function SraView() {
               {(table.risk_origin_types?.length ?? 0) > 0 && (
                 <div className="mt-3 overflow-x-auto">
                   <table className="w-full border-collapse text-sm">
-                    <thead><tr>{["ID", "RO Type canonique", "Définition", "Instances observées", "Caractérisation", "Preuves"].map((label) => <th key={label} className="border border-edge p-2 text-left">{label}</th>)}</tr></thead>
-                    <tbody>{table.risk_origin_types?.map((row) => (
+                    <thead><tr>{["ID", "RO Type canonique", "Définition", "Instances observées", "Caractérisation", "Preuves", "Revue métier"].map((label) => <th key={label} className="border border-edge p-2 text-left">{label}</th>)}</tr></thead>
+                    <tbody>{table.risk_origin_types?.map((row, index) => (
                       <tr key={row.ro_type_id}>
                         <td className="border border-edge p-2 align-top">{row.ro_type_id}</td>
-                        <td className="border border-edge p-2 align-top font-medium">{row.canonical_type}</td>
-                        <td className="border border-edge p-2 align-top">{row.definition}</td>
+                        <td className="border border-edge p-2 align-top font-medium"><input className="w-full bg-transparent" value={row.canonical_type} onChange={(event) => patchRoType(index, { canonical_type: event.target.value, review_status: "modified" })} /></td>
+                        <td className="border border-edge p-2 align-top"><textarea className="min-h-20 w-full bg-transparent" value={row.definition} onChange={(event) => patchRoType(index, { definition: event.target.value, review_status: "modified" })} /></td>
                         <td className="border border-edge p-2 align-top">{row.observed_instances.join("; ") || "—"}</td>
                         <td className="border border-edge p-2 align-top"><ul className="space-y-1">{row.characterization.map((item, i) => <li key={i}>{item}</li>)}</ul></td>
-                        <td className="border border-edge p-2 align-top">{row.evidence.length} preuve(s)</td>
+                        <td className="border border-edge p-2 align-top"><details><summary className="cursor-pointer">{row.evidence.length} preuve(s)</summary>{row.evidence.map((item, evidenceIndex) => <blockquote key={evidenceIndex} className="mt-2 border-l border-edge pl-2 text-xs"><b>{item.source}</b><br />{item.quote}</blockquote>)}</details></td><td className="border border-edge p-2 align-top"><select className="bg-transparent" value={row.review_status ?? "proposed"} onChange={(event) => patchRoType(index, { review_status: event.target.value })}><option value="proposed">À revoir</option><option value="accepted">Accepté</option><option value="rejected">Rejeté</option><option value="modified">Modifié</option></select><textarea className="mt-2 min-h-16 w-full bg-transparent text-xs" placeholder="Commentaire de revue" value={row.review_comment ?? ""} onChange={(event) => patchRoType(index, { review_comment: event.target.value })} /></td>
                       </tr>
                     ))}</tbody>
                   </table>

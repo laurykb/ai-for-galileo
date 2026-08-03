@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import { Banner, Panel, PanelTitle, Spinner } from "@/components/ui";
-import { SraProject, TargetObjectivesTable, exportTargetObjectives, generateTargetObjectives, stopGeneration } from "@/lib/sra";
+import { SraProject, TargetObjectivesTable, exportTargetObjectives, generateTargetObjectives, saveTargetObjectivesTable, stopGeneration } from "@/lib/sra";
 type Props = { project: SraProject; onRefresh: () => Promise<void> };
 function label(event: Record<string, unknown>): string {
   const stage = String(event.stage ?? "analyse");
@@ -19,8 +19,15 @@ function label(event: Record<string, unknown>): string {
 export function TargetObjectivesPanel({ project, onRefresh }: Props) {
   const [table, setTable] = useState<TargetObjectivesTable | null>(project.target_objectives_table ?? null);
   const [trace, setTrace] = useState<string[]>((project.target_objectives_table?.trace ?? []).map(label));
+  const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState<string | null>(null); const [error, setError] = useState<string | null>(null);
   const run = async (name: string, action: () => Promise<void>) => { setBusy(name); setError(null); try { await action(); } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); } finally { setBusy(null); } };
+  const patchRelation = (index: number, patch: Record<string, unknown>) => {
+    if (!table) return;
+    setTable({ ...table, target_objectives: table.target_objectives.map((row, rowIndex) => rowIndex === index ? { ...row, ...patch } : row) });
+    setDirty(true);
+  };
+  const save = () => run("save-to", async () => { if (!table) return; await saveTargetObjectivesTable(project.project_id, table); setDirty(false); await onRefresh(); });
   const stopTo = async () => {
     try { await stopGeneration(project.project_id, "to"); }
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
@@ -43,8 +50,8 @@ export function TargetObjectivesPanel({ project, onRefresh }: Props) {
       <ol className="mt-3 max-h-72 space-y-1 overflow-y-auto text-sm text-fg-muted">{trace.map((entry, index) => <li key={index} className="border-l border-edge pl-3">{entry}</li>)}</ol></Panel>}
     {error && <Banner tone="bad">{error}</Banner>}{table?.warnings.length ? <Banner tone="warn">{table.warnings.join(" · ")}</Banner> : null}
     {table && <Panel><PanelTitle kicker="Target Objectives (TO)" title="Table des cibles potentielles par RO Type" hint={`${table.target_objectives.length} relation(s) RO–cible retenue(s).`} />
-      <div className="mt-3 overflow-x-auto"><table className="w-full border-collapse text-sm"><thead><tr>{["TO ID", "RO Type canonique", "Cible potentielle", "Catégorie", "Justification", "Preuves"].map((item) => <th key={item} className="border border-edge p-2 text-left">{item}</th>)}</tr></thead>
-      <tbody>{table.target_objectives.map((row) => <tr key={row.to_id}><td className="border border-edge p-2 align-top">{row.to_id}</td><td className="border border-edge p-2 align-top font-medium">{row.ro_canonical_type}</td><td className="border border-edge p-2 align-top">{row.target_name}</td><td className="border border-edge p-2 align-top"><ul className="space-y-1">{[row.target_category].map((item, index) => <li key={index}>{item}</li>)}</ul></td><td className="border border-edge p-2 align-top"><ul className="space-y-1">{[row.rationale].map((item, index) => <li key={index}>{item}</li>)}</ul></td><td className="border border-edge p-2 align-top">{row.evidence.length} preuve(s)</td></tr>)}</tbody></table></div>
-      <div className="mt-3 flex justify-end gap-2"><button className="rounded border border-edge px-3 py-1 text-sm" disabled={busy !== null} onClick={() => void run("export-to", () => exportTargetObjectives(project.project_id, "csv"))}>Exporter CSV</button><button className="rounded border border-edge px-3 py-1 text-sm" disabled={busy !== null} onClick={() => void run("export-to", () => exportTargetObjectives(project.project_id, "xlsx"))}>Exporter XLSX</button></div>
+      <div className="mt-3 overflow-x-auto"><table className="w-full border-collapse text-sm"><thead><tr>{["TO ID", "RO Type canonique", "Cible potentielle", "Catégorie", "Justification", "Preuves", "Revue métier"].map((item) => <th key={item} className="border border-edge p-2 text-left">{item}</th>)}</tr></thead>
+      <tbody>{table.target_objectives.map((row, rowIndex) => <tr key={row.to_id}><td className="border border-edge p-2 align-top">{row.to_id}</td><td className="border border-edge p-2 align-top font-medium">{row.ro_canonical_type}</td><td className="border border-edge p-2 align-top"><input className="w-full bg-transparent" value={row.target_name} onChange={(event) => patchRelation(rowIndex, { target_name: event.target.value, review_status: "modified" })} /></td><td className="border border-edge p-2 align-top"><ul className="space-y-1">{[row.target_category].map((item, index) => <li key={index}>{item}</li>)}</ul></td><td className="border border-edge p-2 align-top"><textarea className="min-h-20 w-full bg-transparent" value={row.rationale} onChange={(event) => patchRelation(rowIndex, { rationale: event.target.value, review_status: "modified" })} /></td><td className="border border-edge p-2 align-top"><details><summary className="cursor-pointer">{row.evidence.length} preuve(s)</summary>{row.evidence.map((item, evidenceIndex) => <blockquote key={evidenceIndex} className="mt-2 border-l border-edge pl-2 text-xs"><b>{item.source}</b><br />{item.quote}</blockquote>)}</details></td><td className="border border-edge p-2 align-top"><select className="bg-transparent" value={row.review_status ?? "proposed"} onChange={(event) => patchRelation(rowIndex, { review_status: event.target.value })}><option value="proposed">À revoir</option><option value="accepted">Accepté</option><option value="rejected">Rejeté</option><option value="modified">Modifié</option></select><textarea className="mt-2 min-h-16 w-full bg-transparent text-xs" placeholder="Commentaire de revue" value={row.review_comment ?? ""} onChange={(event) => patchRelation(rowIndex, { review_comment: event.target.value })} /></td></tr>)}</tbody></table></div>
+      <div className="mt-3 flex justify-end gap-2"><button className="rounded border border-edge px-3 py-1 text-sm" disabled={!dirty || busy !== null} onClick={save}>Sauvegarder la revue</button><button className="rounded border border-edge px-3 py-1 text-sm" disabled={busy !== null} onClick={() => void run("export-to", () => exportTargetObjectives(project.project_id, "csv"))}>Exporter CSV</button><button className="rounded border border-edge px-3 py-1 text-sm" disabled={busy !== null} onClick={() => void run("export-to", () => exportTargetObjectives(project.project_id, "xlsx"))}>Exporter XLSX</button></div>
     </Panel>}</>;
 }

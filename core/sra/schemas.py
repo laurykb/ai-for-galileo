@@ -1,7 +1,10 @@
-"""Schémas minimaux de la méthode SRA."""
+"""Schémas de la méthode SRA et de sa revue humaine."""
 from typing import List, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+
+ReviewStatus = Literal["proposed", "accepted", "rejected", "modified"]
 
 
 class StrictModel(BaseModel):
@@ -18,7 +21,14 @@ class Evidence(StrictModel):
     quote: str
 
 
-class RiskOriginType(StrictModel):
+class ReviewFields(StrictModel):
+    review_status: ReviewStatus = "proposed"
+    review_comment: str = ""
+    reviewed_at: str = ""
+    reviewed_by: str = ""
+
+
+class RiskOriginType(ReviewFields):
     ro_type_id: str
     canonical_type: str
     definition: str
@@ -27,7 +37,7 @@ class RiskOriginType(StrictModel):
     evidence: List[Evidence] = Field(default_factory=list)
 
 
-class TargetObjectiveRelation(StrictModel):
+class TargetObjectiveRelation(ReviewFields):
     to_id: str
     ro_type_id: str
     ro_canonical_type: str
@@ -37,7 +47,8 @@ class TargetObjectiveRelation(StrictModel):
     evidence: List[Evidence] = Field(default_factory=list)
 
 
-class AmbiguousCandidate(StrictModel):
+class AmbiguousCandidate(ReviewFields):
+    candidate_id: str = ""
     extracted_category: str
     characterization: str
     source: str
