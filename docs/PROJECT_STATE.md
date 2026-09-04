@@ -6,7 +6,7 @@ Ce document est le point de reprise opérationnel. En cas de divergence, vérifi
 
 ## Cap produit
 
-AI for SSH est un système RAG entièrement local, orienté analyses structurées, exhaustives et multi-documentaires. En mode Auto, le système classe la requête, sélectionne une stratégie et ajuste les paramètres. Le mode Expert expose des overrides intentionnels. RAGAS reste la boussole : aucune technique expérimentale ne devient un défaut automatique sans gain mesuré.
+AI for Galileo est un système RAG entièrement local, orienté analyses structurées, exhaustives et multi-documentaires. En mode Auto, le système classe la requête, sélectionne une stratégie et ajuste les paramètres. Le mode Expert expose des overrides intentionnels. RAGAS reste la boussole : aucune technique expérimentale ne devient un défaut automatique sans gain mesuré.
 
 Le cas d’usage nord est l’analyse de grands corpus de sécurité : identifier toutes les catégories de sources de risque, sources de risque, catégories d’objectifs, objectifs visés et types d’attaquants, avec tableau, couverture documentaire et citations.
 
@@ -63,7 +63,7 @@ Machine validée : 2 × RTX 6000 Ada 48 Go. Profil détecté : `dual_high_vram`,
 
 État validé après redémarrage le 2026-07-27 :
 
-- UI : `http://localhost:3000`
+- UI : `http://localhost:3001`
 - API : `http://127.0.0.1:8000`
 - Ollama bi-GPU persistant : `http://127.0.0.1:11434`
 - `.env` pointe sur le service système `11434`.

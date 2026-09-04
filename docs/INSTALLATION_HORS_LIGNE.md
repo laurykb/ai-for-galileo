@@ -1,4 +1,4 @@
-# AI for SSH v3 hors ligne — guide unique
+# AI for Galileo hors ligne — guide unique
 
 Le paquet contient l'application complète : frontend, API, MongoDB, Ollama,
 données documentaires, index et tous les modèles disponibles sur la source.

@@ -1,32 +1,23 @@
-# web/ — AI for SSH (interface cible)
+# Interface AI for Galileo
 
-Front **Next.js (App Router) + Tailwind, TypeScript** : l'interface de
-l'application (`python serve.py`). Direction artistique : dark OLED, motion
-sobre, kit UI maison (`src/components/ui.tsx`) — avec l'accent périwinkle
-propre à AI for SSH. Pages : Chat RAG (SSE, sources, boîte de verre), Documents
-& ingestion, Observabilité (mode expert), Paramètres — thème Thales (nuit
-bleue + aqua), intro animée.
-
-## Lancer en local
-
-Prérequis : Node ≥ 20 (installé via nvm : `nvm use default`).
+Front Next.js 16 de l’espace d’analyse Galileo. Il réunit le chat documentaire
+multi-source, le suivi des preuves et l’atelier SRA pour les Risk Objectives,
+scénarios et Target Objectives.
 
 ```bash
-python serve.py   # depuis la racine : Mongo + Ollama + API :8000 + front :3000
+# depuis la racine
+python serve.py
+
+# ou uniquement le front
+cd web
+npm install
+npm run dev
 ```
 
-ou, front seul (sans l'API) :
-
-```bash
-bash dev.sh             # depuis web/ — équivaut à npm run dev
-```
-
-Ouvre <http://localhost:3000>. L'API est attendue sur `http://127.0.0.1:8000`
-(surchargable via `NEXT_PUBLIC_API_BASE` dans `.env.local`). Première fois :
-`npm install` (réseau requis une fois ; les fonts Google sont self-hostées au
-build par `next/font`, rien ne sort de la machine au runtime).
-
-## Vérifications
+Avec `python serve.py`, l’interface utilise par défaut
+<http://localhost:3001> et l’API <http://127.0.0.1:8001>. En mode front seul,
+ces valeurs peuvent être surchargées avec `WEB_PORT` et
+`NEXT_PUBLIC_API_BASE`.
 
 ```bash
 npm run lint
