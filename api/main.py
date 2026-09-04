@@ -25,7 +25,7 @@ app = FastAPI(title="AI for SSH — API")
 # WEB_ORIGINS (env, séparées par des virgules) autorise d'autres origines —
 # ex. un front de worktree sur :3001 quand deux lanes tournent en parallèle.
 _ORIGINS = os.environ.get(
-    "WEB_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
+    "WEB_ORIGINS", "http://localhost:3001,http://localhost:3000,http://127.0.0.1:3000")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[o.strip() for o in _ORIGINS.split(",") if o.strip()],

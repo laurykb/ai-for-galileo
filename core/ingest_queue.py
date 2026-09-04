@@ -33,6 +33,34 @@ def default_params() -> dict:
     }
 
 
+def _discard_failed_job(job: dict) -> None:
+    """Retire les fichiers et index partiels laissés par une ingestion en échec."""
+    path = Path(job["path"])
+    stem = path.stem
+    source_name = job.get("source_name") or (path.name if path.suffix.lower() == ".md" else f"{stem}-clean.md")
+    artifacts = {path}
+    if path.suffix.lower() != ".md":
+        artifacts.update({DOCS_OUT / f"{stem}.md", DOCS_OUT.parent / "out_clean_md" / f"{stem}-clean.md"})
+    for artifact in artifacts:
+        try:
+            artifact.unlink(missing_ok=True)
+        except OSError:
+            pass
+    try:
+        from env_config import MONGO_DB
+        from utils.mongo import get_client
+        db = get_client()[MONGO_DB]
+        db["chunks"].delete_many({"source": source_name})
+        db["bm25_indexes"].delete_many({"source_doc": source_name})
+    except Exception:
+        pass
+    try:
+        from retrieval.vector_store import get_vector_store
+        get_vector_store().delete_source(source_name)
+    except Exception:
+        pass
+
+
 def _process_job(job: dict) -> None:
     """Convertit (si besoin) puis ingère le document d'un job. Met à jour sa
     progression. Tourne dans le thread worker. Ne lève pas : renseigne job['result']."""
@@ -65,6 +93,7 @@ def _process_job(job: dict) -> None:
             from core.ask import clear_retrieval_caches
             clear_retrieval_caches()      # le nouveau document devient interrogeable
     except Exception as e:
+        _discard_failed_job(job)
         job["result"] = {"status": "error", "message": str(e)}
 
 

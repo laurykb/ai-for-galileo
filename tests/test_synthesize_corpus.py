@@ -137,7 +137,7 @@ def test_reduce_batched_when_material_large(monkeypatch):
     assert done["result"]["answer"].strip() != ""
 
 
-def test_structured_aggregate_decomposes_axes_and_requires_table(monkeypatch):
+def test_structured_aggregate_decomposes_axes_without_rigid_template(monkeypatch):
     monkeypatch.setenv("CORPUS_MAP_CONCURRENCY", "1")
     question = ("Sur tous les documents, identifie les catégories de sources de risque, "
                 "les sources de risque, les catégories d objectif visé et les objectifs "
@@ -160,8 +160,8 @@ def test_structured_aggregate_decomposes_axes_and_requires_table(monkeypatch):
     assert "objectifs visés" in stage["dimensions"]
     assert "types d attaquants ou acteurs de menace" in stage["dimensions"]
     assert "AXES OBLIGATOIRES" in extracted_aspects[0]
-    assert "TABLEAU MARKDOWN" in prompts[0]
-    assert "Couverture" in prompts[0]
+    assert "aucun gabarit exact n est imposé" in prompts[0]
+    assert "Distingue clairement une catégorie" in prompts[0]
 
 def test_regular_synthesis_keeps_default_output_contract(monkeypatch):
     monkeypatch.setenv("CORPUS_MAP_CONCURRENCY", "1")
@@ -238,3 +238,72 @@ def test_default_coverage_prompt_formats_and_parses_json():
                               llm=lambda prompt: prompts.append(prompt) or "{\"missing\": [\"Objectifs\"]}")
     assert missing == ["Objectifs"]
     assert "{\"missing\"" in prompts[0]
+
+def test_explicit_exhaustive_request_scans_all_sources_without_prefilter(monkeypatch):
+    import core.corpus
+    import core.corpus_extract
+    monkeypatch.setattr(core.corpus, "list_indexed_sources", lambda: ["a.md", "b.md"])
+    calls = []
+
+    def exhaustive(document, aspect):
+        calls.append((document, aspect))
+        return {"document": document, "items": [
+            "AXE=catégories de sources de risque | acteur",
+            "AXE=sources de risque | service hostile",
+            "AXE=catégories d objectifs visés | disponibilité",
+            "AXE=objectifs visés | interruption",
+            "AXE=relations source de risque vers objectif visé | hostile -> interruption",
+        ], "raw": "", "batch_count": 2, "chunks_scanned": 10}
+
+    monkeypatch.setattr(core.corpus_extract, "extract_from_document_exhaustive", exhaustive)
+    events = list(synthesize_corpus(
+        "Sur tous les documents, catégorise les sources de risque et les objectifs visés de façon exhaustive.",
+        llm=lambda _prompt: "réponse [src: a.md]"))
+    assert events[0]["documents"] == ["a.md", "b.md"]
+    assert {document for document, _aspect in calls} == {"a.md", "b.md"}
+    maps = [event for event in events if event["type"] == "map"]
+    assert all(event["chunks_scanned"] == 10 for event in maps)
+    assert events[-1]["result"]["execution_control"]["expansion"]["attempted"] is False
+
+
+def test_map_budget_exhaustion_aborts_instead_of_becoming_empty_document():
+    from utils.task_metrics import TaskBudgetExceeded
+
+    def exhausted(_document, _aspect):
+        raise TaskBudgetExceeded("Budget de tokens atteint")
+
+    try:
+        list(synthesize_corpus(
+            "question",
+            prefilter=lambda _aspect: ["a.md"],
+            extract=exhausted,
+            map_only=True,
+        ))
+    except TaskBudgetExceeded as exc:
+        assert str(exc) == "Budget de tokens atteint"
+    else:
+        raise AssertionError("Le dépassement de budget MAP devait interrompre la tâche")
+
+
+def test_exhaustive_request_expands_missing_axes_once_and_stops(monkeypatch):
+    import core.corpus
+    import core.corpus_extract
+    monkeypatch.setattr(core.corpus, "list_indexed_sources", lambda: ["a.md"])
+    calls = []
+
+    def exhaustive(document, aspect):
+        calls.append(aspect)
+        items = (["AXE=sources de risque | acteur"] if not aspect.startswith("COMPLÉMENT")
+                 else ["AXE=objectifs visés | interruption"])
+        return {"document": document, "items": items, "raw": "",
+                "batch_count": 1, "chunks_scanned": 4}
+
+    monkeypatch.setattr(core.corpus_extract, "extract_from_document_exhaustive", exhaustive)
+    events = list(synthesize_corpus(
+        "Sur tous les documents, catégorise les sources de risque et les objectifs visés de façon exhaustive.",
+        llm=lambda _prompt: "réponse [src: a.md]"))
+    assert len(calls) == 2
+    expansion = events[-1]["result"]["execution_control"]["expansion"]
+    assert expansion["attempted"] is True
+    assert expansion["added_items"] == 1
+    assert expansion["stopped_reason"] == "single_bounded_expansion"

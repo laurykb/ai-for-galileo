@@ -122,11 +122,14 @@ Guide complet (modèles, GPU, gotchas par OS, **install hors-ligne / réseau
 restreint**) : **[SETUP_PORTABLE.md](SETUP_PORTABLE.md)**.
 Prérequis runtime : **Ollama** + **MongoDB**.
 
+Livraison air-gap complète : `deploy/offline.sh prepare DESTINATION`.
+Installation et exploitation : **[docs/INSTALLATION_HORS_LIGNE.md](docs/INSTALLATION_HORS_LIGNE.md)**.
+
 ## Points d'entrée
 
 | Commande | Rôle |
 |---|---|
-| `python serve.py` | UI cible : API FastAPI (`:8000`) + front Next.js (`:3000`) |
+| `python serve.py` | UI cible : API FastAPI (`:8001`) + front Next.js (`:3001`) |
 | `python -m evals.run_eval --mode retrieval` | évaluation chiffrée (retrieval) |
 | `python -m core.agent "…"` | agent ReAct en CLI |
 | `python rag_mcp_server.py` | serveur MCP (stdio) |

@@ -363,7 +363,8 @@ def retrieve_wide(query: str, source_filter: str = None, topn: int = None):
     except Exception as e:
         logger.warning("[retrieve_wide] Recherche sémantique en échec : %s", e)
 
-    return query, chunks[:topn]
+    from core.evidence_policy import rank_chat_candidates
+    return query, rank_chat_candidates(chunks)[:topn]
 
 
 def retrieve_only(user_q: str, source_filter: str = None,

@@ -171,7 +171,7 @@ export function Composer({
                 <option value="auto">Auto</option>
                 <option value="deep">Analyse profonde</option>
                 {expert && <option value="rag">RAG</option>}
-                {expert && <option value="agent">Agent</option>}
+                <option value="agent">Agent</option>
               </select>
             )}
             {busy ? (

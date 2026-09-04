@@ -12,6 +12,10 @@ def _ce(item: dict) -> float:
     return item.get("ce_score", 0.0)
 
 
+def _rank_score(item: dict) -> float:
+    return item.get("evidence_score", item.get("ce_score", item.get("score_global", 0.0)))
+
+
 def elastic_candidate_pool(n_docs, pool_min, pool_max, per_doc):
     """Taille élastique du pool de candidats : petit corpus -> rapide (proche de
     pool_min), gros corpus -> plafonné (pool_max). Dérivée gratuitement du nombre
@@ -55,7 +59,7 @@ def apply_coverage_floor(items, base_k, per_doc_floor=1, max_chunks=24, floor_mi
     if len(result) > max_chunks:
         kept_selected = selected[:max_chunks]                 # depth: natural top always survive
         floor_budget = max(0, max_chunks - len(kept_selected))
-        kept_floored = sorted(floored, key=_ce, reverse=True)[:floor_budget]  # breadth fills leftover
+        kept_floored = sorted(floored, key=_rank_score, reverse=True)[:floor_budget]  # breadth fills leftover
         result = kept_selected + kept_floored
-    result.sort(key=_ce, reverse=True)
+    result.sort(key=_rank_score, reverse=True)
     return result

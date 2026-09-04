@@ -20,6 +20,7 @@ export const metadata: Metadata = {
   title: "AI for SSH",
   description:
     "Chat documentaire et analyse SRA 100 % locaux : vos documents ne quittent pas cette machine.",
+  icons: { icon: "/thales.svg" },
 };
 
 export default function RootLayout({

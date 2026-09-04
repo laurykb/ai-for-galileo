@@ -1,0 +1,29 @@
+{
+  "taxonomy_id": "sra-default",
+  "version": "1.0",
+  "types": [
+    {"ro_type_id": "RO-01", "canonical_type": "Acteur étatique", "definition": "État ou organisme agissant pour des intérêts stratégiques nationaux."},
+    {"ro_type_id": "RO-02", "canonical_type": "Groupe soutenu par un État", "definition": "Groupe distinct, dirigé, financé ou soutenu par un État."},
+    {"ro_type_id": "RO-03", "canonical_type": "Cybercriminel organisé", "definition": "Organisation criminelle structurée motivée principalement par le gain financier."},
+    {"ro_type_id": "RO-04", "canonical_type": "Hacktiviste", "definition": "Individu ou collectif motivé par une cause politique, sociale ou idéologique."},
+    {"ro_type_id": "RO-05", "canonical_type": "Terroriste ou groupe armé", "definition": "Organisation terroriste, paramilitaire ou groupe armé non étatique."},
+    {"ro_type_id": "RO-06", "canonical_type": "Menace interne malveillante", "definition": "Personne disposant d'un accès légitime et agissant délibérément contre l'organisation."},
+    {"ro_type_id": "RO-07", "canonical_type": "Concurrent ou espion industriel", "definition": "Organisation recherchant un avantage économique ou technologique."},
+    {"ro_type_id": "RO-08", "canonical_type": "Acteur de la chaîne d'approvisionnement", "definition": "Fournisseur, sous-traitant ou partenaire utilisant délibérément sa position de confiance."},
+    {"ro_type_id": "RO-09", "canonical_type": "Attaquant opportuniste", "definition": "Acteur ciblant des systèmes exposés sans sélection stratégique préalable."},
+    {"ro_type_id": "RO-10", "canonical_type": "Autre acteur malveillant", "definition": "Acteur intentionnel ne relevant d'aucun autre type canonique."}
+  ],
+  "aliases": {
+    "Acteur étatique": "RO-01",
+    "Groupe cyber soutenu par un État": "RO-02",
+    "Groupe soutenu par un État": "RO-02",
+    "Cybercriminel organisé": "RO-03",
+    "Hacktiviste": "RO-04",
+    "Terroriste ou groupe armé": "RO-05",
+    "Menace interne malveillante": "RO-06",
+    "Concurrent ou espion industriel": "RO-07",
+    "Acteur de la chaîne d'approvisionnement": "RO-08",
+    "Attaquant opportuniste": "RO-09",
+    "Autre acteur malveillant": "RO-10"
+  }
+}

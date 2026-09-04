@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import time
+from pathlib import Path
 from typing import Callable, Optional
 
 from core.sra.schemas import RiskObjectivesTable, SraGenerationConfig
@@ -14,39 +16,30 @@ SRA_ADJUDICATION_MAX_OUTPUT_TOKENS = 4_096
 SRA_FINALIZATION_MAX_OUTPUT_TOKENS = 2_048
 ADJUDICATION_BATCH_CHARS = 18_000
 
-RO_TYPE_TAXONOMY = {
-    "RO-01": ("Acteur étatique", "État ou organisme agissant pour des intérêts stratégiques nationaux."),
-    "RO-02": ("Groupe soutenu par un État", "Groupe distinct, dirigé, financé ou soutenu par un État."),
-    "RO-03": ("Cybercriminel organisé", "Organisation criminelle structurée motivée principalement par le gain financier."),
-    "RO-04": ("Hacktiviste", "Individu ou collectif motivé par une cause politique, sociale ou idéologique."),
-    "RO-05": ("Terroriste ou groupe armé", "Organisation terroriste, paramilitaire ou groupe armé non étatique."),
-    "RO-06": ("Menace interne malveillante", "Personne disposant d un accès légitime et agissant délibérément contre l organisation."),
-    "RO-07": ("Concurrent ou espion industriel", "Organisation recherchant un avantage économique ou technologique."),
-    "RO-08": ("Acteur de la chaîne d approvisionnement", "Fournisseur, sous-traitant ou partenaire utilisant délibérément sa position de confiance."),
-    "RO-09": ("Attaquant opportuniste", "Acteur ciblant des systèmes exposés sans sélection stratégique préalable."),
-    "RO-10": ("Autre acteur malveillant", "Acteur intentionnel ne relevant d aucun autre type canonique."),
-}
+DEFAULT_TAXONOMY_PATH = Path(__file__).with_name("default_ro_taxonomy.json")
+with DEFAULT_TAXONOMY_PATH.open(encoding="utf-8") as _stream:
+    _DEFAULT_TAXONOMY = json.load(_stream)
+RO_TYPE_TAXONOMY = {row["ro_type_id"]: (row["canonical_type"], row["definition"])
+                    for row in _DEFAULT_TAXONOMY["types"]}
+CATEGORY_TO_RO_TYPE = dict(_DEFAULT_TAXONOMY.get("aliases") or {})
 
-CATEGORY_TO_RO_TYPE = {
-    "Acteur étatique": "RO-01",
-    "Groupe cyber soutenu par un État": "RO-02",
-    "Groupe soutenu par un État": "RO-02",
-    "Cybercriminel organisé": "RO-03",
-    "Hacktiviste": "RO-04",
-    "Terroriste ou groupe armé": "RO-05",
-    "Menace interne malveillante": "RO-06",
-    "Concurrent ou espion industriel": "RO-07",
-    "Acteur de la chaîne d approvisionnement": "RO-08",
-    "Acteur de la chaîne d\x27approvisionnement": "RO-08",
-    "Attaquant opportuniste": "RO-09",
-    "Autre acteur malveillant": "RO-10",
-}
+def _taxonomy(config: SraGenerationConfig) -> tuple[dict[str, tuple[str, str]], dict[str, str]]:
+    """Retourne la taxonomie effective; la configuration projet prime sur le défaut."""
+    taxonomy = ({row.ro_type_id: (row.canonical_type, row.definition)
+                 for row in config.ro_types} if config.ro_types else dict(RO_TYPE_TAXONOMY))
+    aliases = {label: type_id for label, type_id in CATEGORY_TO_RO_TYPE.items()
+               if type_id in taxonomy}
+    aliases.update(config.ro_type_aliases)
+    for type_id, (label, _definition) in taxonomy.items():
+        aliases[label] = type_id
+    return taxonomy, aliases
 
-def _canonical_ro_type(category: str) -> tuple[str, list[str]]:
+
+def _canonical_ro_type(category: str, aliases: Optional[dict[str, str]] = None) -> tuple[str, list[str]]:
     """Ramène une catégorie adjudiquée vers un type fermé; sépare ses instances."""
     normalized = " ".join(category.split())
     base = normalized.split(" (", 1)[0]
-    type_id = CATEGORY_TO_RO_TYPE.get(base, "")
+    type_id = (aliases or CATEGORY_TO_RO_TYPE).get(base, "")
     instances: list[str] = []
     if type_id and " (" in normalized and normalized.endswith(")"):
         instances = [item.strip() for item in normalized.split(" (", 1)[1][:-1].split(",") if item.strip()]
@@ -101,11 +94,10 @@ ou organisationnel contre un système, une mission, ses données ou ses services
   conserve uniquement la finalité hostile explicitement étayée derrière ce moyen.
 - N'infère jamais une intention hostile à partir de la seule possession d'une capacité.
 - Produis un objectif atomique par effet final. Sépare les objectifs multiples.
-- Normalise la catégorie vers l'une des familles suivantes quand la preuve le permet :
-  Acteur étatique; Groupe cyber soutenu par un État; Cybercriminel organisé;
-  Hacktiviste; Terroriste ou groupe armé; Menace interne malveillante;
-  Concurrent ou espion industriel; Acteur de la chaîne d'approvisionnement;
-  Attaquant opportuniste; Autre acteur malveillant.
+- Normalise la catégorie vers l'une des familles configurées suivantes quand la preuve le permet :
+{taxonomy}
+- Si aucune famille ne convient, conserve un libellé générique factuel sans inventer
+  de nouvelle motivation. Le pipeline décidera si cette catégorie peut être proposée.
 - Un État nommé peut être conservé entre parenthèses, par exemple
   "Acteur étatique (Chine)". Ne transforme pas un pays mentionné en attaquant si le
   passage décrit seulement sa politique, sa coopération ou sa défense.
@@ -130,6 +122,13 @@ Réponds UNIQUEMENT avec ce JSON :
 [CANDIDATS]
 {candidates}
 """
+
+FINALIZATION_PROMPT = """Tu es le rédacteur SRA. Reformule en français clair et factuel les
+caractérisations de chaque RO Type. Ne change aucun identifiant, type, instance ou preuve.
+N'ajoute aucun fait. Réponds uniquement avec le JSON
+{{"types":[{{"ro_type_id":"RO-01","characterization":["..."]}}]}}
+[RO TYPES]
+{types}"""
 
 def _parse_json(raw: object) -> Optional[dict]:
     if not isinstance(raw, str):
@@ -169,10 +168,16 @@ def _content_batches(
 
 def _default_gather(document: str) -> list[dict]:
     from utils.mongo import get_db
-    return list(get_db()["chunks"].find(
+    from core.evidence_policy import select_primary_evidence_chunks
+    chunks = list(get_db()["chunks"].find(
         {"source": document, "chunk_type": {"$ne": "summary"}},
-        {"content": 1, "section_idx": 1, "chunk_idx": 1},
+        {"content": 1, "section_idx": 1, "chunk_idx": 1,
+         "quality_status": 1, "quality_reasons": 1, "content_provenance": 1},
     ).sort([("section_idx", 1), ("chunk_idx", 1)]))
+    selected, policy = select_primary_evidence_chunks(chunks)
+    for chunk in selected:
+        chunk["evidence_policy"] = policy
+    return selected
 
 
 def _adjudication_batches(candidates: list[dict], limit: int = ADJUDICATION_BATCH_CHARS) -> list[list[tuple[int, dict]]]:
@@ -196,11 +201,14 @@ def _adjudication_batches(candidates: list[dict], limit: int = ADJUDICATION_BATC
 def _adjudicate_candidates(
     candidates: list[dict], llm: Callable, notify: Callable,
     batch_chars: int = ADJUDICATION_BATCH_CHARS, retries: int = 1,
+    taxonomy_labels: Optional[list[str]] = None,
 ) -> tuple[list[dict], list[str]]:
     """Filtre et normalise les candidats; toute omission est un rejet sûr."""
     accepted: list[dict] = []
     warnings: list[str] = []
     batches = _adjudication_batches(candidates, batch_chars)
+    from core.prompt_registry import get_prompt
+    adjudication_prompt = get_prompt("sra.ro.adjudication", ADJUDICATION_PROMPT)
     notify("sra_adjudication_start", {
         "candidates": len(candidates), "batch_count": len(batches),
     })
@@ -214,7 +222,9 @@ def _adjudicate_candidates(
         } for candidate_id, candidate in batch]
         def decide(rows):
             try:
-                return _parse_json(llm(ADJUDICATION_PROMPT.format(
+                return _parse_json(llm(adjudication_prompt.format(
+                    taxonomy="; ".join(taxonomy_labels or
+                                       [label for label, _definition in RO_TYPE_TAXONOMY.values()]),
                     candidates=json.dumps(rows, ensure_ascii=False),
                 ), format="json")) or {}
             except __import__("core.llm_client", fromlist=["GenerationTruncated"]).GenerationTruncated:
@@ -328,15 +338,21 @@ def extract_sra_from_document(
         llm = build_llm("extract").invoke
     gather = gather or _default_gather
     notify = progress or (lambda stage, detail=None: None)
+    from core.prompt_registry import get_prompt
+    map_prompt = get_prompt("sra.ro.map", MAP_PROMPT)
     items: list[str] = []
     candidates: list[dict] = []
     seen: set[tuple[str, str, str]] = set()
 
     chunks = gather(document)
+    evidence_policy = (
+        chunks[0].get("evidence_policy", "custom_gather") if chunks else "no_evidence"
+    )
     batches = _content_batches(chunks, batch_chars, batch_overlap)
     total_chars = sum(len(str(chunk.get("content", ""))) for chunk in chunks)
     notify("sra_document_start", {"document": document,
-           "batch_count": len(batches), "characters": total_chars})
+           "batch_count": len(batches), "characters": total_chars,
+           "evidence_policy": evidence_policy})
     for batch_index, text in enumerate(batches, 1):
         if cancel_event is not None and cancel_event.is_set():
             from core.llm_client import GenerationCancelled
@@ -346,7 +362,7 @@ def extract_sra_from_document(
         before = len(items)
         def invoke_segment(segment):
             try:
-                return _parse_json(llm(MAP_PROMPT.format(
+                return _parse_json(llm(map_prompt.format(
                     document=document, text=segment), format="json")) or {}
             except __import__("core.llm_client", fromlist=["GenerationTruncated"]).GenerationTruncated:
                 if len(segment) <= 4_000:
@@ -394,7 +410,7 @@ def extract_sra_from_document(
            "batch_count": len(batches), "candidates": len(items)})
     return {
         "document": document, "items": items, "candidates": candidates,
-        "raw": "\n".join(items),
+        "raw": "\n".join(items), "evidence_policy": evidence_policy,
     }
 
 
@@ -414,6 +430,7 @@ def generate_risk_objectives(
     from core.synthesize_corpus import synthesize_corpus
 
     config = SraGenerationConfig.model_validate(generation_config or {})
+    taxonomy, taxonomy_aliases = _taxonomy(config)
     if extract_llm is None:
         from core.model_router import build_llm
         client = build_llm("extract", model=config.extraction_model,
@@ -476,6 +493,7 @@ def generate_risk_objectives(
         candidates, project_llm, notify,
         batch_chars=config.adjudication_batch_chars,
         retries=config.adjudication_retries,
+        taxonomy_labels=[label for label, _definition in taxonomy.values()],
     )
     warnings.extend(adjudication_warnings)
 
@@ -483,10 +501,18 @@ def generate_risk_objectives(
     ambiguous: list[dict] = []
     for candidate in adjudicated:
         category = " ".join(str(candidate.get("attacker_category", "")).split())
-        type_id, instances = _canonical_ro_type(category)
+        type_id, instances = _canonical_ro_type(category, taxonomy_aliases)
         source = str(candidate.get("source", "")).strip()
         proof = str(candidate.get("evidence", "")).strip()
         characterization = " ".join(str(candidate.get("targeted_objectives", "")).split())
+        if not type_id and config.taxonomy_mode == "extensible":
+            base = category.split(" (", 1)[0].strip()
+            if " (" in category and category.endswith(")"):
+                instances = [item.strip() for item in category.split(" (", 1)[1][:-1].split(",")
+                             if item.strip()]
+            digest = hashlib.sha256(base.casefold().encode("utf-8")).hexdigest()[:8].upper()
+            type_id = f"RO-EXT-{digest}"
+            taxonomy[type_id] = (base, "Type proposé à partir des preuves du corpus; validation humaine requise.")
         if not type_id:
             ambiguous.append({
                 "extracted_category": category,
@@ -495,11 +521,14 @@ def generate_risk_objectives(
                 "reason": "Catégorie absente de la taxonomie fermée",
             })
             continue
-        canonical_type, definition = RO_TYPE_TAXONOMY[type_id]
+        canonical_type, definition = taxonomy[type_id]
         entry = consolidated.setdefault(type_id, {
             "ro_type_id": type_id, "canonical_type": canonical_type,
             "definition": definition, "observed_instances": [],
             "characterization": [], "evidence": [],
+            "review_comment": ("Type découvert hors taxonomie "
+                               f"{config.taxonomy_id}@{config.taxonomy_version}; à valider."
+                               if type_id.startswith("RO-EXT-") else ""),
         })
         for instance in instances:
             if instance not in entry["observed_instances"]:
@@ -512,7 +541,7 @@ def generate_risk_objectives(
         ):
             entry["evidence"].append({"source": source, "quote": proof})
 
-    rows = [consolidated[type_id] for type_id in RO_TYPE_TAXONOMY
+    rows = [consolidated[type_id] for type_id in taxonomy
             if type_id in consolidated]
     if config.finalization_enabled and rows:
         try:
@@ -527,13 +556,9 @@ def generate_risk_objectives(
                 "canonical_type": row["canonical_type"],
                 "characterization": row["characterization"],
             } for row in rows]
-            prompt = (
-                "Tu es le rédacteur SRA. Reformule en français clair et factuel les "
-                "caractérisations de chaque RO Type. Ne change aucun identifiant, type, "
-                "instance ou preuve. N ajoute aucun fait. Réponds uniquement avec le JSON "
-                "{\"types\":[{\"ro_type_id\":\"RO-01\",\"characterization\":[\"...\"]}]}\n"
-                + json.dumps(payload, ensure_ascii=False)
-            )
+            from core.prompt_registry import get_prompt
+            prompt = get_prompt("sra.ro.finalization", FINALIZATION_PROMPT).format(
+                types=json.dumps(payload, ensure_ascii=False))
             finalized = _parse_json(finalizer.invoke_cancellable(
                 prompt, format="json", cancel_event=cancel_event)) or {}
             by_type = {item.get("ro_type_id"): item for item in finalized.get("types", []) if isinstance(item, dict)}

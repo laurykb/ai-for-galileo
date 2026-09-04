@@ -3,8 +3,11 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { Banner, Panel, PanelTitle, Pill, Spinner } from "@/components/ui";
+import { AgentsView } from "@/components/agents";
+import { useExpert } from "@/components/expert-toggle";
 import { TargetObjectivesPanel } from "@/components/sra/target-objectives-panel";
 import { getJSON, SourcesResponse } from "@/lib/api";
+import type { TaskMetrics } from "@/lib/types";
 import {
   RiskObjectivesTable, SraGenerationConfig, SraProject, createProject, exportTable,
   generateRiskObjectives, getProject, listProjects, listRevisions, duplicateProject, patchProject, saveTable, stopGeneration, updateDocuments, updateGenerationConfig,
@@ -17,8 +20,18 @@ const PROFILE_CONFIGS: Record<"quality" | "balanced" | "fast", SraGenerationConf
   fast: { ...QUALITY_CONFIG, profile: "fast", adjudication_model: "qwen3.5:latest", finalization_model: "qwen3.5:latest", map_batch_chars: 30000, map_batch_overlap: 1000, adjudication_batch_chars: 26000, adjudication_retries: 0 },
 };
 
+type SraTab = "ro" | "to" | "sources" | "configuration" | "prompts" | "history";
+
 function traceLabel(event: Record<string, unknown>): string {
   const stage = String(event.stage ?? "analyse");
+  if (stage === "sra_ro_budget") {
+    const estimate = (event.estimate ?? {}) as Record<string, unknown>;
+    const budget = (event.budget ?? {}) as Record<string, unknown>;
+    return "Charge estimée RO — " + String(estimate.documents ?? 0) + " document(s), "
+      + String(estimate.windows ?? 0) + " fenêtre(s), environ "
+      + String(estimate.estimated_map_calls ?? 0) + " appel(s) MAP · garde-fou "
+      + String(budget.max_total_tokens ?? 0) + " tokens";
+  }
   if (stage === "sra_document_start") return "Démarrage de " + String(event.document ?? "document") + " — " + String(event.batch_count ?? 0) + " fenêtre(s), " + String(event.characters ?? 0) + " caractères";
   if (stage === "sra_batch") return String(event.document ?? "document") + " — fenêtre " + String(event.batch ?? "") + "/" + String(event.batch_count ?? "") + " (" + String(event.characters ?? 0) + " caractères)";
   if (stage === "sra_batch_split") return "Sortie RO trop longue — fenêtre divisée automatiquement";
@@ -33,7 +46,9 @@ function traceLabel(event: Record<string, unknown>): string {
 }
 
 export function SraView() {
+  const expert = useExpert();
   const [projects, setProjects] = useState<SraProject[]>([]);
+  const [activeTab, setActiveTab] = useState<SraTab>("ro");
   const [sources, setSources] = useState<string[]>([]);
   const [models, setModels] = useState<string[]>([]);
   const [generationConfig, setGenerationConfig] = useState<SraGenerationConfig>(QUALITY_CONFIG);
@@ -46,6 +61,7 @@ export function SraView() {
   const [stage, setStage] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [trace, setTrace] = useState<string[]>([]);
+  const [taskMetrics, setTaskMetrics] = useState<TaskMetrics | null>(null);
   const [revisions, setRevisions] = useState<Array<{ revision_id: string; kind: "ro" | "to"; sequence: number; reason: string; created_at: string }>>([]);
 
   const refresh = useCallback(async (projectId?: string) => {
@@ -95,6 +111,7 @@ export function SraView() {
   const generate = () => run("generate", async () => {
     if (!current) return;
     setTrace([]);
+    setTaskMetrics(null);
     await updateDocuments(current.project_id, selectedDocs);
     await updateGenerationConfig(current.project_id, generationConfig);
     await generateRiskObjectives(current.project_id, (event) => {
@@ -103,6 +120,7 @@ export function SraView() {
         setTrace((currentTrace) => [...currentTrace, traceLabel(event)]);
       }
       if (event.type === "table") setTable(event.table);
+      if (event.type === "task_metrics") setTaskMetrics(event.metrics);
       if (event.type === "error") setError(event.message);
     });
     await refresh(current.project_id);
@@ -187,21 +205,42 @@ export function SraView() {
 
       {current && (
         <>
-          {revisions.length > 0 && <Panel><PanelTitle kicker="Traçabilité" title="Historique des versions" hint="Chaque génération ou revue sauvegardée reste consultable et comparable via son identifiant." /><ol className="mt-3 space-y-2 text-sm">{revisions.map((revision) => <li key={revision.revision_id} className="flex justify-between border-b border-edge pb-2"><span>{revision.kind.toUpperCase()} v{revision.sequence} · {revision.reason}</span><span className="text-fg-muted">{new Date(revision.created_at).toLocaleString("fr-FR")}</span></li>)}</ol></Panel>}
-          <Panel>
+          <Panel><PanelTitle kicker="Dossier actif" title={current.name} hint={current.document_ids.length + " document(s) dans le corpus · " + (table?.risk_origin_types?.length ?? 0) + " RO Type(s) · " + (current.target_objectives_table?.target_objectives.length ?? 0) + " relation(s) TO"} />
+            <nav className="mt-3 flex flex-wrap gap-2" aria-label="Sections du dossier SRA">{([
+              ["ro", "Risk Origins (RO)"], ["to", "Target Objectives (TO)"], ["sources", "Sources"], ["configuration", "Configuration"],
+              ...(expert ? [["prompts", "Prompts métier"]] : []), ["history", "Historique"],
+            ] as Array<[SraTab, string]>).map(([id, label]) => <button key={id} onClick={() => setActiveTab(id)} className={"rounded border px-3 py-2 text-sm " + (activeTab === id ? "border-accent-bright bg-surface-2 text-foreground" : "border-edge text-fg-muted")}>{label}</button>)}</nav>
+          </Panel>
+
+          {activeTab === "sources" && <Panel><PanelTitle kicker="Corpus du dossier" title="Documents sources" hint="Ce corpus sert à la génération des RO Types. Un sous-ensemble distinct pourra être choisi pour les Target Objectives." right={<button className="rounded border border-edge px-2 py-1 text-xs" disabled={busy !== null || sources.length === 0} onClick={() => setSelectedDocs(allSelected ? [] : [...sources])}>{allSelected ? "Tout désélectionner" : "Tout sélectionner"}</button>} /><div className="mt-3 grid gap-1 md:grid-cols-2">{sources.map((source) => <label key={source} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={selectedDocs.includes(source)} disabled={busy !== null} onChange={(event) => setSelectedDocs(event.target.checked ? [...selectedDocs, source] : selectedDocs.filter((item) => item !== source))} />{source}</label>)}</div><button className="mt-3 rounded border border-edge px-3 py-1 text-sm" disabled={busy !== null || selectedDocs.length === 0} onClick={() => void run("sources", async () => { await updateDocuments(current.project_id, selectedDocs); await refresh(current.project_id); })}>Enregistrer le corpus</button></Panel>}
+
+          {activeTab === "history" && revisions.length > 0 && <Panel><PanelTitle kicker="Traçabilité" title="Historique des versions" hint="Chaque génération ou revue sauvegardée reste consultable et comparable via son identifiant." /><ol className="mt-3 space-y-2 text-sm">{revisions.map((revision) => <li key={revision.revision_id} className="flex justify-between border-b border-edge pb-2"><span>{revision.kind.toUpperCase()} v{revision.sequence} · {revision.reason}</span><span className="text-fg-muted">{new Date(revision.created_at).toLocaleString("fr-FR")}</span></li>)}</ol></Panel>}
+          {activeTab === "configuration" && <Panel>
             <PanelTitle kicker="Configuration du dossier SRA" title="Modèles et stratégie de génération" hint="Réglages persistés avec le dossier et réutilisables par les futures tables SRA." />
             <div className="mt-3 grid gap-3 md:grid-cols-2">
-              <label className="text-sm">Profil<select className="mt-1 w-full rounded border border-edge bg-surface p-2" value={generationConfig.profile} onChange={(event) => { const profile = event.target.value as SraGenerationConfig["profile"]; setGenerationConfig(profile === "custom" ? { ...generationConfig, profile } : PROFILE_CONFIGS[profile]); }}><option value="quality">Qualité maximale — recommandé</option><option value="balanced">Équilibré</option><option value="fast">Rapide</option><option value="custom">Personnalisé</option></select></label>
+              <label className="text-sm">Profil<select className="mt-1 w-full rounded border border-edge bg-surface p-2" value={generationConfig.profile} onChange={(event) => { const profile = event.target.value as SraGenerationConfig["profile"]; setGenerationConfig(profile === "custom" ? { ...generationConfig, profile } : { ...generationConfig, ...PROFILE_CONFIGS[profile] }); }}><option value="quality">Qualité maximale — recommandé</option><option value="balanced">Équilibré</option><option value="fast">Rapide</option><option value="custom">Personnalisé</option></select></label>
               {[["extraction_model", "Extraction exhaustive"], ["adjudication_model", "Adjudication métier"], ["finalization_model", "Finalisation rédactionnelle"]].map(([field, label]) => <label key={field} className="text-sm">{label}<select className="mt-1 w-full rounded border border-edge bg-surface p-2" value={String(generationConfig[field as keyof SraGenerationConfig])} onChange={(event) => setGenerationConfig({ ...generationConfig, profile: "custom", [field]: event.target.value })}>{models.map((model) => <option key={model} value={model}>{model}</option>)}</select></label>)}
               <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={generationConfig.finalization_enabled} onChange={(event) => setGenerationConfig({ ...generationConfig, profile: "custom", finalization_enabled: event.target.checked })} />Activer la finalisation rédactionnelle optionnelle</label>
               <label className="text-sm">Relances d adjudication<input className="mt-1 w-full rounded border border-edge bg-transparent p-2" type="number" min={0} max={3} value={generationConfig.adjudication_retries} onChange={(event) => setGenerationConfig({ ...generationConfig, profile: "custom", adjudication_retries: Number(event.target.value) })} /></label>
+              <label className="text-sm">Mode de taxonomie<select className="mt-1 w-full rounded border border-edge bg-surface p-2" value={generationConfig.taxonomy_mode ?? "closed"} onChange={(event) => setGenerationConfig({ ...generationConfig, profile: "custom", taxonomy_mode: event.target.value as "closed" | "extensible" })}><option value="closed">Fermée — catégories inconnues à part</option><option value="extensible">Extensible — nouveaux types proposés</option></select></label>
+              <label className="text-sm">Identifiant de taxonomie<input className="mt-1 w-full rounded border border-edge bg-transparent p-2" value={generationConfig.taxonomy_id ?? "sra-default"} onChange={(event) => setGenerationConfig({ ...generationConfig, profile: "custom", taxonomy_id: event.target.value })} /></label>
+              <label className="text-sm">Version de taxonomie<input className="mt-1 w-full rounded border border-edge bg-transparent p-2" value={generationConfig.taxonomy_version ?? "1.0"} onChange={(event) => setGenerationConfig({ ...generationConfig, profile: "custom", taxonomy_version: event.target.value })} /></label>
             </div>
             <details className="mt-3 text-sm text-fg-muted"><summary>Paramètres avancés</summary><div className="mt-2 grid gap-3 md:grid-cols-3">
               {[["map_batch_chars", "Taille fenêtre MAP", 8000, 48000], ["map_batch_overlap", "Chevauchement", 0, 6000], ["adjudication_batch_chars", "Taille lot adjudication", 6000, 36000]].map(([field, label, min, max]) => <label key={String(field)}>{label}<input className="mt-1 w-full rounded border border-edge bg-transparent p-2" type="number" min={Number(min)} max={Number(max)} step={500} value={Number(generationConfig[field as keyof SraGenerationConfig])} onChange={(event) => setGenerationConfig({ ...generationConfig, profile: "custom", [field as string]: Number(event.target.value) })} /></label>)}
             </div></details>
             <button className="mt-3 rounded border border-edge px-3 py-1 text-sm" disabled={busy !== null} onClick={() => void run("config", async () => { await updateGenerationConfig(current.project_id, generationConfig); await refresh(current.project_id); })}>Enregistrer la configuration</button>
-          </Panel>
+          </Panel>}
 
+          {activeTab === "prompts" && <Panel>
+            <PanelTitle kicker="Mode Expert SRA" title="Prompts métier RO et TO"
+              hint="Ces agents appartiennent uniquement au pipeline SRA et sont indépendants des prompts Chat/RAG." />
+            <AgentsView groups={["ro", "to"]} />
+          </Panel>}
+
+          {activeTab === "to" && <TargetObjectivesPanel key={current.project_id} project={current} sources={sources} onRefresh={() => refresh(current.project_id)} />}
+
+          {activeTab === "ro" && <>
           <Panel>
             <PanelTitle kicker={current.name} title="1. Générer les RO Types"
               hint="Sélectionnez les documents puis lancez la construction du référentiel des Risk Origin Types. Les Target Objectives seront traités séparément."
@@ -252,16 +291,16 @@ export function SraView() {
           )}
 
           {error && <Banner tone="bad">{error}</Banner>}
+          {taskMetrics && <Panel><PanelTitle kicker="Métriques de tâche" title={taskMetrics.status === "completed" ? "Génération accomplie" : "Génération " + taskMetrics.status} hint={taskMetrics.trajectory.llm_calls + " appel(s) LLM · " + taskMetrics.efficiency.total_tokens + " tokens · " + taskMetrics.latency_s + "s"} /><p className="mt-2 text-sm text-fg-muted">Temps LLM cumulé : {taskMetrics.trajectory.llm_time_s}s · charge relative {Math.round((taskMetrics.trajectory.llm_share ?? 0) * 100)} % du temps mur · juge sémantique : non exécuté</p></Panel>}
           {table?.warnings.length ? (
             <Banner tone="warn">{table.warnings.join(" · ")}</Banner>
           ) : null}
-
-          <TargetObjectivesPanel key={current.project_id} project={current} onRefresh={() => refresh(current.project_id)} />
 
           {table && (
             <Panel>
               <PanelTitle kicker="Risk Origins (RO)" title="Table des RO Types"
                 hint={`${table.risk_origin_types?.length ?? table.risk_objectives.length} ligne(s) détectée(s) avec le profil ${table.generation_config?.profile ?? "hérité"}.`} />
+              <details open className="mt-3"><summary className="cursor-pointer text-sm font-medium text-fg-muted">Afficher / masquer la table RO</summary>
               {(table.risk_origin_types?.length ?? 0) > 0 && (
                 <div className="mt-3 overflow-x-auto">
                   <table className="w-full border-collapse text-sm">
@@ -308,6 +347,7 @@ export function SraView() {
                   </tbody>
                 </table>
               </div>}
+              </details>
               <div className="mt-3 flex flex-wrap gap-2">
                 <button className="rounded border border-edge px-3 py-1 text-sm"
                   disabled={table.schema_version === "2.0"} onClick={addRow}>Ajouter une ligne</button>
@@ -328,6 +368,7 @@ export function SraView() {
               </div>
             </Panel>
           )}
+          </>}
         </>
       )}
     </div>

@@ -43,6 +43,8 @@ export type Affirmation = {
  * garde ses marqueurs inline, rien n'est bloqué). */
 export type Attribution = {
   ok: boolean;
+  verification_level?: "markers_only" | "semantic";
+  semantic_support?: number | null;
   affirmations?: Affirmation[];
   n_affirmations?: number;
   n_sourcees?: number;
@@ -51,8 +53,26 @@ export type Attribution = {
   error?: string | null;
 };
 
+export type EvidenceDossier = { mode: string; contract: { id: string; label: string; sections: string[]; instructions: string }; points_to_cover: string[]; evidence_count: number };
+
+export type AnswerValidation = { contract_id: string; contract_label: string; required_sections: string[]; present_sections: string[]; missing_sections: string[]; structure_complete: boolean; enforcement?: "enforced" | "shadow"; citation_count: number; invalid_citations: number[]; citation_coverage: number; evidence_count: number; completion: "complete" | "partial" };
+
+export type EvidenceRow = { axis: string; category: string; element: string; characterization: string; target_objective: string; sources: string[]; evidence: { quote: string; source: string; verified: boolean }[]; status: "validated" | "to_review" };
+
+export type AnalysisArtifact = { rows: EvidenceRow[]; candidates: number; consolidated: number; validated: number; to_review: number };
+
+export type TaskProgress = { phase: string; label: string; status: "running" | "completed" | "partial" | "failed"; current?: number; total?: number; detail?: string | Record<string, unknown> };
+
+export type TaskMetrics = { task_id: string; kind: string; status: "completed" | "partial" | "failed" | "stopped" | "budget_exceeded"; latency_s: number; outcome: { completion?: string; route?: string; found?: boolean; error?: string }; trajectory: { llm_calls: number; llm_calls_by_role: Record<string, number>; llm_calls_by_operation?: Record<string, number>; prompt_tokens: number; completion_tokens: number; llm_time_s: number; llm_share?: number | null; tool_calls: number; steps: number; replans: number }; efficiency: { total_tokens: number; llm_calls: number; llm_time_s: number; prompt_eval_s?: number; decode_s?: number; load_s?: number; latency_s: number }; quality: { semantic_judge: "not_run" | "completed" } };
+
 /** Trames SSE de POST /api/ask. */
 export type AskEvent =
+  | { type: "task"; task_id: string; status: "running" }
+  | { type: "task_metrics"; metrics: TaskMetrics }
+  | { type: "answer_contract"; dossier: EvidenceDossier }
+  | { type: "answer_validation"; validation: AnswerValidation }
+  | { type: "analysis_artifact"; artifact: AnalysisArtifact }
+  | ({ type: "task_progress" } & TaskProgress)
   | { type: "session"; id: string }
   | { type: "route"; mode: "rag" | "agent" | "synth"; reason: string }
   | { type: "strategy"; policy_version: string; query_type: string; intent: string;
@@ -71,6 +91,7 @@ export type AskEvent =
   | { type: "observation"; text: string }
   | { type: "token"; text: string }
   | { type: "sources"; citations: Citation[] }
+  | { type: "persistence"; saved: boolean; message: string | null }
   | { type: "coverage"; documents: DocumentCoverage; axes?: AxisCoverage }
   | ({ type: "attribution" } & Attribution)
   | { type: "eval"; faithfulness?: number; answer_relevance?: number;
@@ -106,10 +127,16 @@ export type ChatMessage = {
   reasoning?: string | null;
   /** Routage affiché (mode Auto) : « RAG — raison ». */
   route?: string;
-  /** Vérification automatique (question à enjeu). */
+  /** Vérification sémantique à la demande. */
   eval?: EvalResult;
   /** Attribution par affirmation (passe post-hoc, persistée en session). */
   attribution?: Attribution;
   documentCoverage?: DocumentCoverage;
   axisCoverage?: AxisCoverage;
+  taskMetrics?: TaskMetrics;
+  processingTrace?: TaskProgress[];
+  evidenceDossier?: EvidenceDossier;
+  answerValidation?: AnswerValidation;
+  analysisArtifact?: AnalysisArtifact;
+  persistenceWarning?: string;
 };

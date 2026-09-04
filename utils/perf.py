@@ -15,7 +15,10 @@ _BUFFER: deque[dict] = deque(maxlen=200)
 
 
 def record(model: str, gen_tokens: int, gen_s: float, prompt_tokens: int,
-           total_s: float, ttft_s: float | None, ts: float) -> None:
+           total_s: float, ttft_s: float | None, ts: float,
+           task_id: str | None = None, role: str | None = None,
+           prompt_eval_s: float = 0.0, load_s: float = 0.0,
+           ollama_total_s: float = 0.0) -> None:
     """Enregistre une génération. `gen_s` = durée de décodage (s) renvoyée par Ollama."""
     _BUFFER.append({
         "model": model,
@@ -23,9 +26,14 @@ def record(model: str, gen_tokens: int, gen_s: float, prompt_tokens: int,
         "gen_s": gen_s,
         "tok_per_s": (gen_tokens / gen_s) if gen_s else None,
         "prompt_tokens": prompt_tokens,
+        "prompt_eval_s": prompt_eval_s,
+        "load_s": load_s,
+        "ollama_total_s": ollama_total_s,
         "total_s": total_s,
         "ttft_s": ttft_s,
         "ts": ts,
+        "task_id": task_id,
+        "role": role,
     })
 
 

@@ -179,6 +179,41 @@ def test_adjudication_incomplete_rejette_par_securite():
     assert "rejeté(s) par sécurité" in table["warnings"][0]
 
 
+def test_taxonomie_personnalisee_remplace_le_catalogue_par_defaut():
+    def pipeline(question, **kwargs):
+        yield {"type": "done", "result": {"extractions": [{"candidates": [{
+            "attacker_category": "Opérateur hostile", "targeted_objectives": "Dégrader le service",
+            "evidence": "dégrade le service", "source": "test-7.md",
+        }]}], "document_coverage": {"documents_without_evidence": []}}}
+
+    table = generate_risk_objectives(
+        "p-7", ["test-7.md"], pipeline=pipeline,
+        project_llm=lambda *_args, **_kwargs: '{"decisions":[{"id":1,"accepte":true,"categorie_normalisee":"Opérateur hostile","objectifs_atomiques":["Dégrader le service"],"motif_rejet":"","confiance":"haute"}]}',
+        generation_config={"taxonomy_id": "test-7", "taxonomy_version": "7.0",
+            "ro_types": [{"ro_type_id": "RO-77", "canonical_type": "Opérateur hostile",
+                          "definition": "Acteur propre au septième corpus."}]},
+    )
+    assert [(row["ro_type_id"], row["canonical_type"]) for row in table["risk_origin_types"]] == [
+        ("RO-77", "Opérateur hostile")]
+
+
+def test_taxonomie_extensible_produit_un_identifiant_stable_a_revoir():
+    def pipeline(question, **kwargs):
+        yield {"type": "done", "result": {"extractions": [{"candidates": [{
+            "attacker_category": "Collectif orbital autonome", "targeted_objectives": "Brouiller le signal",
+            "evidence": "brouille le signal", "source": "test-7.md",
+        }]}], "document_coverage": {"documents_without_evidence": []}}}
+    adjudicate = lambda *_args, **_kwargs: '{"decisions":[{"id":1,"accepte":true,"categorie_normalisee":"Collectif orbital autonome","objectifs_atomiques":["Brouiller le signal"],"motif_rejet":"","confiance":"moyenne"}]}'
+    config = {"taxonomy_mode": "extensible", "taxonomy_id": "test-7", "taxonomy_version": "7.0"}
+    first = generate_risk_objectives("p-7", ["test-7.md"], pipeline=pipeline,
+                                     project_llm=adjudicate, generation_config=config)
+    second = generate_risk_objectives("p-8", ["test-7.md"], pipeline=pipeline,
+                                      project_llm=adjudicate, generation_config=config)
+    assert first["risk_origin_types"][0]["ro_type_id"] == second["risk_origin_types"][0]["ro_type_id"]
+    assert first["risk_origin_types"][0]["ro_type_id"].startswith("RO-EXT-")
+    assert "à valider" in first["risk_origin_types"][0]["review_comment"]
+
+
 def test_export_csv_ro_types_six_colonnes(tmp_path):
     destination = tmp_path / "ro.csv"
     export_csv(_table(), destination)
@@ -217,3 +252,26 @@ def test_extraction_ro_fractionne_seulement_si_sortie_tronquee():
     assert result["candidates"] == []
     assert calls[0] >= 12_000
     assert len(calls) > 1
+
+
+def test_task_metrics_correlate_llm_calls_and_efficiency():
+    from utils import task_metrics
+    task = task_metrics.begin("chat", question="test")
+    task_metrics.record_llm_call(task["task_id"], "model-a", "generate", 100, 25, 2.5)
+    task_metrics.record_llm_call(task["task_id"], "model-b", "judge", 40, 5, 0.5)
+    task_metrics.set_trajectory(task["task_id"], tool_calls=2, steps=3)
+    result = task_metrics.finish(task["task_id"], completion="complete")
+    assert result["trajectory"]["llm_calls"] == 2
+    assert result["trajectory"]["llm_calls_by_role"] == {"generate": 1, "judge": 1}
+    assert result["efficiency"]["total_tokens"] == 170
+    assert result["quality"]["semantic_judge"] == "not_run"
+
+
+def test_sra_task_metrics_detect_partial_document_coverage():
+    from utils import task_metrics
+    task = task_metrics.begin("sra.to")
+    result = {"table": {"source_document_ids": ["a.pdf"], "target_objectives": [{"to_id": "TO-1"}], "warnings": []}}
+    metrics = task_metrics.finish_sra(task["task_id"], result, ["a.pdf", "b.pdf"], "target_objectives")
+    assert metrics["status"] == "partial"
+    assert metrics["outcome"]["completion"] == "partial"
+    assert metrics["outcome"]["processed_documents"] == 1

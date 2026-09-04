@@ -88,8 +88,10 @@ _ROLE_PARAMS = {
     # Plans courts et structurés : température nulle, contexte modéré (question +
     # observations résumées), sortie plafonnée (un plan JSON tient en ~300 tokens).
     "planner":  {"temperature": 0.0, "num_ctx": 8192, "num_predict": 600, "think": False},
-    "extract":  {"temperature": 0.0, "num_ctx": LLM_NUM_CTX, "think": False},
-    "synthesize": {"temperature": 0.2, "num_ctx": LLM_NUM_CTX},
+    "extract":  {"temperature": 0.0, "num_ctx": LLM_NUM_CTX, "num_predict": 2048, "think": False},
+    # Réduction riche mais bornée afin de réserver du budget à la fusion finale.
+    "synthesize": {"temperature": 0.15, "num_ctx": LLM_NUM_CTX,
+                   "num_predict": 4096, "think": False},
     "generate": {"temperature": 0.3, "top_k": NUM_CHUNKS, "top_p": 0.8,
                  "repeat_penalty": 1.5, "num_ctx": LLM_NUM_CTX},
     "judge":    {"temperature": 0.0, "num_ctx": 8192, "num_predict": 32, "think": False},
@@ -158,7 +160,7 @@ def build_llm(role: str, **overrides):
     model = kw.pop("model")
     keep_alive = kw.pop("keep_alive", None)
     logger.debug("LLM rôle=%s -> modèle=%s", role, model)
-    return OllamaClient(model=model, options=kw, keep_alive=keep_alive)
+    return OllamaClient(model=model, options=kw, keep_alive=keep_alive, role=role)
 
 
 def unload_model(model: str) -> None:

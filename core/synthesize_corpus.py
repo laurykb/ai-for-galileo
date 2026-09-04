@@ -5,10 +5,13 @@ LLM et étapes injectables pour des tests offline déterministes."""
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import re
 
 from utils.logging_config import get_logger
 
 logger = get_logger("rag.synthesize")
+
+_FULL_CORPUS_REQUEST = re.compile(r"\b(tous? les documents|ensemble (?:des documents|du corpus)|sur tout le corpus|exhausti(?:f|ve|vement))\b", re.IGNORECASE)
 
 _REDUCE_PROMPT = """[RÔLE] Tu SYNTHÉTISES en une réponse unique les éléments « {aspect} » extraits de plusieurs documents.
 
@@ -105,11 +108,12 @@ def _judge_coverage(answer: str, dimensions: list[str], llm=None) -> list[str]:
 
 _DEFAULT_OUTPUT_CONTRACT = "- Organise la réponse en sections et listes lisibles."
 _STRUCTURED_OUTPUT_CONTRACT = """
-- Produis un TABLEAU MARKDOWN avec exactement les colonnes : Axe | Catégorie | Élément | Caractérisation | Objectif lié | Sources.
-- Une ligne par élément atomique ; ne fusionne pas deux relations différentes.
-- La colonne Sources recopie toutes les étiquettes [src: ...] qui soutiennent la ligne.
-- Après le tableau, ajoute une section « Couverture » listant chaque axe demandé et indique : couvert, partiel ou absent.
-- N invente jamais une catégorie, un objectif ou une relation pour remplir une case vide.
+- Réponds directement à la question, sans répéter les consignes ni ajouter de rubrique artificielle.
+- Organise la matière autour des axes demandés. Utilise des sous-titres, listes ou tableaux seulement lorsqu ils rendent les résultats plus lisibles ; aucun gabarit exact n est imposé.
+- Distingue clairement une catégorie, un élément concret, sa caractérisation et son objectif.
+- Une ligne ou puce décrit un élément atomique et conserve toutes ses étiquettes [src: ...].
+- Signale brièvement les axes insuffisamment étayés et les contradictions en fin de réponse.
+- N invente jamais une catégorie, un objectif ou une relation pour remplir un manque.
 """
 
 def _structured_analysis_contract(question: str) -> dict | None:
@@ -132,12 +136,25 @@ def _structured_analysis_contract(question: str) -> dict | None:
     axes = list(dict.fromkeys(axes))
     extraction_aspect = (
         question + "\n\nAXES OBLIGATOIRES : " + "; ".join(axes) +
-        ". Pour chaque fait, renvoie une ligne au format : "
-        "AXE | CATÉGORIE | ÉLÉMENT | CARACTÉRISATION | OBJECTIF_LIÉ. "
-        "Écris INCONNU lorsqu une relation n est pas explicitement étayée."
+        ". Extrais séparément les faits relevant de chacun de ces axes. "
+        "Chaque élément suit : AXE=<libellé exact> | CATEGORIE=<...> | ELEMENT=<...> | CARACTERISATION=<...> | OBJECTIF=<...> | PREUVE=<courte citation exacte>. "
+        "Pour chaque fait, préserve le vocabulaire du document et indique explicitement "
+        "l axe, la catégorie éventuelle, l élément concret, sa caractérisation et "
+        "l objectif lié lorsqu il est réellement documenté. Ne confonds pas acteur, "
+        "menace ou mode opératoire, vulnérabilité, conséquence et objectif visé. "
+        "N ajoute pas de relation absente du document."
     )
     return {"dimensions": axes, "extraction_aspect": extraction_aspect,
             "output_contract": _STRUCTURED_OUTPUT_CONTRACT}
+
+
+def _missing_extraction_axes(extractions, dimensions: list[str]) -> list[str]:
+    """Axes sans aucun item MAP explicitement étiqueté par le LLM."""
+    from core.router import _norm
+    material = _norm("\n".join(
+        str(item) for extraction in (extractions or [])
+        for item in (extraction or {}).get("items", [])))
+    return [axis for axis in dimensions if _norm(axis) not in material]
 
 
 def _document_coverage(documents, extractions) -> dict:
@@ -190,14 +207,24 @@ def synthesize_corpus(question, aspect=None, llm=None, prefilter=None, extract=N
     """Générateur d'événements glass-box (voir docstring du plan)."""
     aspect = aspect or question
     contract = _structured_analysis_contract(question)
+    full_corpus_requested = bool(_FULL_CORPUS_REQUEST.search(question))
+    adaptive_expansion = prefilter is None and full_corpus_requested
     extraction_aspect = contract["extraction_aspect"] if contract else aspect
     output_contract = contract["output_contract"] if contract else _DEFAULT_OUTPUT_CONTRACT
     if prefilter is None:
-        from core.corpus import prefilter_documents
-        prefilter = lambda a: prefilter_documents(a)
+        if full_corpus_requested:
+            from core.corpus import list_indexed_sources
+            prefilter = lambda _a: list_indexed_sources()
+        else:
+            from core.corpus import prefilter_documents
+            prefilter = lambda a: prefilter_documents(a)
     if extract is None:
-        from core.corpus_extract import extract_from_document
-        extract = lambda d, a: extract_from_document(d, a)
+        if contract:
+            from core.corpus_extract import extract_from_document_exhaustive
+            extract = lambda d, a: extract_from_document_exhaustive(d, a)
+        else:
+            from core.corpus_extract import extract_from_document
+            extract = lambda d, a: extract_from_document(d, a)
     if llm is None:
         from core.model_router import build_llm
         llm = build_llm("synthesize").invoke
@@ -212,21 +239,68 @@ def synthesize_corpus(question, aspect=None, llm=None, prefilter=None, extract=N
         yield {"type": "done", "result": {"answer": "", "documents": [], "n_items": 0}}
         return
 
-    def _safe_extract(d):
+    from utils import task_metrics
+    task_id = task_metrics.current_task_id()
+
+    def _extract_with_context(d, requested_aspect, operation_name="extract"):
+        token = task_metrics.bind(task_id) if task_id else None
         try:
-            return extract(d, extraction_aspect)
+            with task_metrics.operation(operation_name):
+                return extract(d, requested_aspect)
+        except task_metrics.TaskBudgetExceeded:
+            # Un budget global épuisé n'est pas un document « sans preuve » :
+            # interrompre la tâche évite une consolidation vide trompeuse.
+            raise
         except Exception as e:
             logger.warning("[synthesize] MAP échec sur %s : %s", d, e)
             return {"document": d, "items": [], "raw": ""}
+        finally:
+            if token is not None:
+                task_metrics.unbind(token)
+
+    def _safe_extract(d):
+        return _extract_with_context(d, extraction_aspect)
 
     # MAP (concurrence bornée) — pool.map préserve l'ordre des documents. Un échec
     # sur UN document ne fait pas échouer tout le run (dégrade en items vides).
     workers = max(1, int(CORPUS_MAP_CONCURRENCY))
     with ThreadPoolExecutor(max_workers=workers) as pool:
         extractions = list(pool.map(_safe_extract, docs))
+
+    expansion = {"attempted": False, "missing_before": [], "added_items": 0,
+                 "stopped_reason": "not_required"}
+    if contract and adaptive_expansion:
+        missing_axes = _missing_extraction_axes(extractions, contract["dimensions"])
+        expansion["missing_before"] = list(missing_axes)
+        if missing_axes:
+            expansion["attempted"] = True
+            yield {"type": "stage", "stage": "expand", "missing": list(missing_axes),
+                   "reason": "axes sans preuve après le premier balayage"}
+            targeted = (
+                "COMPLÉMENT CIBLÉ SUR AXES MANQUANTS : " + "; ".join(missing_axes) +
+                ". Utilise le format AXE | CATEGORIE | ELEMENT | CARACTERISATION | OBJECTIF | PREUVE demandé. Renvoie uniquement "
+                "des faits explicitement présents ; une liste vide est une décision valide."
+            )
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                complements = list(pool.map(
+                    lambda d: _extract_with_context(d, targeted, "coverage_expand"), docs))
+            added = 0
+            for base, complement in zip(extractions, complements):
+                known = {" ".join(str(item).casefold().split()) for item in (base.get("items") or [])}
+                for item in complement.get("items") or []:
+                    key = " ".join(str(item).casefold().split())
+                    if key not in known:
+                        known.add(key); base.setdefault("items", []).append(item); added += 1
+            expansion["added_items"] = added
+            expansion["missing_after"] = _missing_extraction_axes(extractions, contract["dimensions"])
+            expansion["stopped_reason"] = "coverage_stable" if not added else "single_bounded_expansion"
+            yield {"type": "stage", "stage": "expand_complete", **expansion}
+
     for i, (d, res) in enumerate(zip(docs, extractions), 1):
         n_items = len(res["items"]) if res and res.get("items") else 0
         yield {"type": "map", "index": i, "total": len(docs), "document": d, "n_items": n_items,
+               "batch_count": (res or {}).get("batch_count"),
+               "chunks_scanned": (res or {}).get("chunks_scanned"),
                "coverage_status": "covered" if n_items else "no_evidence"}
 
     document_coverage = _document_coverage(docs, extractions)
@@ -238,13 +312,16 @@ def synthesize_corpus(question, aspect=None, llm=None, prefilter=None, extract=N
             "answer": "", "documents": list(docs), "n_items": total_items,
             "extractions": extractions,
             "document_coverage": document_coverage,
+            "execution_control": {"expansion": expansion},
         }}
         return
 
     # REDUCE
     from core.summarize import _MAX_MATERIAL_CHARS
 
-    material = _format_material(extractions)
+    from core.evidence_registry import build_registry, registry_material
+    evidence_registry = build_registry(extractions)
+    material = registry_material(evidence_registry) if contract else _format_material(extractions)
     if not material.strip():
         yield {"type": "stage", "stage": "reduce"}
         yield {"type": "done", "result": {"answer": "", "documents": list(docs), "n_items": 0}}
@@ -291,6 +368,8 @@ def synthesize_corpus(question, aspect=None, llm=None, prefilter=None, extract=N
             def _safe_repair(d):
                 try:
                     return extract(d, repair_aspect)
+                except task_metrics.TaskBudgetExceeded:
+                    raise
                 except Exception as e:
                     logger.warning("[synthesize] réparation MAP échec sur %s : %s", d, e)
                     return {"document": d, "items": [], "raw": ""}
@@ -324,7 +403,14 @@ def synthesize_corpus(question, aspect=None, llm=None, prefilter=None, extract=N
                   "chunk_type": "synthesis_evidence"}}
         for ex in extractions if ex and ex.get("items")
     ]
+    from core.answer_contract import build_evidence_dossier, validate_answer
+    dossier = build_evidence_dossier(question, quality_chunks, "synth")
+    validation = validate_answer(answer, dossier, citation_style="source", enforce_structure=False)
     yield {"type": "done", "result": {"answer": answer, "documents": list(docs),
                                        "n_items": total_items, "chunks": quality_chunks,
                                        "coverage": coverage,
-                                       "document_coverage": document_coverage}}
+                                       "document_coverage": document_coverage,
+                                       "execution_control": {"expansion": expansion},
+                                       "analysis_artifact": evidence_registry,
+                                       "evidence_dossier": dossier,
+                                       "answer_validation": validation}}

@@ -57,9 +57,11 @@ class VectorStore(ABC):
         """Vide la collection et la recrée (réingestion propre, anti-doublons)."""
 
     def delete_source(self, source: str) -> None:
-        """Supprime tous les vecteurs d'UN document (métadonnée `source`).
-        Optionnel : les backends qui ne le supportent pas gardent ce no-op
-        (le nettoyage se fait alors par `reset()` + réingestion)."""
+        """Supprime les vecteurs d une source si le backend le permet."""
+
+    def source_counts(self) -> dict[str, int] | None:
+        """Nombre de vecteurs par source, ou None si non supporté."""
+        return None
 
 
 class ChromaVectorStore(VectorStore):
@@ -110,6 +112,19 @@ class ChromaVectorStore(VectorStore):
             self._coll().delete(where={"source": source})
         except Exception as e:
             logger.warning("delete_source(%s) : %s", source, e)
+
+    def source_counts(self) -> dict[str, int] | None:
+        try:
+            result = self._coll().get(include=["metadatas"])
+            counts: dict[str, int] = {}
+            for metadata in result.get("metadatas") or []:
+                source = str((metadata or {}).get("source") or "")
+                if source:
+                    counts[source] = counts.get(source, 0) + 1
+            return counts
+        except Exception as e:
+            logger.warning("source_counts() indisponible : %s", e)
+            return None
 
     # -- lecture ---------------------------------------------------------------
     def query(self, embedding, n_results, source_filter=None) -> list[VectorHit]:

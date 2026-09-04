@@ -12,6 +12,32 @@ logger = get_logger("rag.embedding")
 _INVALID_EMBED_ABORT_RATIO = 0.5
 
 
+def _sanitize_chroma_metadata(meta):
+    """Retourne des métadonnées scalaires compatibles avec Chroma.
+
+    Mongo conserve les listes structurées sur les chunks. L'index vectoriel n'en
+    a besoin que pour l'affichage/retrieval et certaines versions de Chroma
+    refusent notamment les listes vides (cas normal pour quality_reasons sur un
+    chunk accepté).
+    """
+    sanitized = dict(meta)
+    separators = {
+        "questions": " | ",
+        "quality_reasons": ", ",
+    }
+    for key, value in list(sanitized.items()):
+        if isinstance(value, dict):
+            if key == "entities":
+                from nlp.ner_extractor import entities_to_str
+                sanitized[key] = entities_to_str(value)
+            else:
+                sanitized[key] = str(value)
+        elif isinstance(value, (list, tuple, set)):
+            separator = separators.get(key, ", ")
+            sanitized[key] = separator.join(str(item) for item in value)
+    return sanitized
+
+
 def _prefix_header(text, breadcrumb):
     """Préfixe [breadcrumb] au texte à embarquer si absent (idempotent)."""
     if not (CONTEXT_HEADERS_ENABLED and breadcrumb):
@@ -116,19 +142,7 @@ def build_embeddings(docs):
         vecs = [vecs[i] for i in keep]
 
     # Chroma n'accepte pas les objets complexes dans metadata.
-    metadatas = []
-    for meta in raw_metadatas:
-        meta = dict(meta)
-        if isinstance(meta.get("keywords"), list):
-            meta["keywords"] = ", ".join(meta["keywords"])
-        if isinstance(meta.get("questions"), list):
-            meta["questions"] = " | ".join(meta["questions"])
-        if isinstance(meta.get("entities"), dict):
-            from nlp.ner_extractor import entities_to_str
-            meta["entities"] = entities_to_str(meta["entities"])
-        if isinstance(meta.get("entities_flat"), list):
-            meta["entities_flat"] = ", ".join(meta["entities_flat"])
-        metadatas.append(meta)
+    metadatas = [_sanitize_chroma_metadata(meta) for meta in raw_metadatas]
 
     return texts, vecs, metadatas, ids
 
@@ -170,7 +184,6 @@ def index_chroma(ids, texts, metadatas, embeddings, collection_name=COLLECTION_N
         return store
     store.add(ids=ids, documents=texts, metadatas=metadatas, embeddings=embeddings)
     return store
-
 
 
 

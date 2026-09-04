@@ -3,10 +3,12 @@ import copy
 import time
 import uuid
 
-from core.sra.schemas import RiskObjectivesTable, SraGenerationConfig, TargetObjectivesTable
+from core.sra.schemas import (ClassifiedTargetObjectivesTable, RiskObjectivesTable,
+                              SraGenerationConfig, TargetObjectivesTable, TreatmentPlan)
 
 COLLECTION = "sra_projects"
 REVISIONS_COLLECTION = "sra_revisions"
+CHECKPOINTS_COLLECTION = "sra_generation_checkpoints"
 
 
 def _now() -> str:
@@ -20,6 +22,7 @@ class SraRepository:
             db = get_db()
         self.projects = db[COLLECTION]
         self.revisions = db[REVISIONS_COLLECTION]
+        self.checkpoints = db[CHECKPOINTS_COLLECTION]
 
     @staticmethod
     def _clean(doc):
@@ -36,6 +39,8 @@ class SraRepository:
             "status": "created", "archived": False,
             "created_at": _now(), "updated_at": _now(),
             "table": None, "target_objectives_table": None,
+            "classified_target_objectives_table": None,
+            "treatment_plan": None, "downstream_status": "no_decision",
             "active_ro_revision_id": None, "active_to_revision_id": None,
             "generation_jobs": {}, "exports": [],
         }
@@ -75,6 +80,11 @@ class SraRepository:
         if source.get("target_objectives_table"):
             clone = self.save_target_objectives_table(
                 clone["project_id"], source["target_objectives_table"], reason="duplicate")
+        if source.get("classified_target_objectives_table"):
+            clone = self.save_classified_target_objectives_table(
+                clone["project_id"], source["classified_target_objectives_table"])
+        if source.get("treatment_plan"):
+            clone = self.save_treatment_plan(clone["project_id"], source["treatment_plan"])
         return clone
 
     def update_documents(self, project_id: str, document_ids: list[str]) -> dict:
@@ -120,10 +130,71 @@ class SraRepository:
 
     def save_target_objectives_table(self, project_id: str, table: dict,
                                      reason: str = "manual_review") -> dict:
-        data = TargetObjectivesTable.model_validate(table).model_dump()
+        from core.sra.scenario_enrichment import enrich_scenario
+        enriched = copy.deepcopy(table)
+        for relation in enriched.get("target_objectives", []):
+            ro_id = relation.get("ro_type_id", "")
+            proof_count = len(relation.get("ro_evidence", []))
+            if relation.get("attacks") is not None:
+                relation["attacks"] = [
+                    enrich_scenario(scenario, ro_id, proof_count)
+                    for scenario in relation.get("attacks", [])
+                ]
+        data = TargetObjectivesTable.model_validate(enriched).model_dump()
         data["project_id"] = project_id
         self._save_revision(project_id, "to", data, reason)
+        self.projects.update_one({"project_id": project_id}, {"$set": {
+            "classified_target_objectives_table": None,
+            "treatment_plan": None,
+            "downstream_status": "stale_after_to_revision",
+            "updated_at": _now(),
+        }})
         return self.get_project(project_id)
+
+    def save_classified_target_objectives_table(self, project_id: str, table: dict) -> dict:
+        data = ClassifiedTargetObjectivesTable.model_validate(table).model_dump()
+        data["project_id"] = project_id
+        self.projects.update_one({"project_id": project_id}, {"$set": {
+            "classified_target_objectives_table": copy.deepcopy(data),
+            "treatment_plan": None, "downstream_status": "decision_current",
+            "status": "ready", "updated_at": _now()}})
+        return self.get_project(project_id)
+
+    def save_treatment_plan(self, project_id: str, plan: dict) -> dict:
+        data = TreatmentPlan.model_validate(plan).model_dump()
+        data["project_id"] = project_id
+        self.projects.update_one({"project_id": project_id}, {"$set": {
+            "treatment_plan": copy.deepcopy(data),
+            "downstream_status": "treatment_current", "updated_at": _now(),
+        }})
+        return self.get_project(project_id)
+
+    def get_generation_checkpoint(self, project_id: str, kind: str,
+                                  fingerprint: str) -> dict | None:
+        return self._clean(self.checkpoints.find_one({
+            "project_id": project_id, "kind": kind,
+            "fingerprint": fingerprint,
+        }))
+
+    def save_generation_checkpoint(self, project_id: str, kind: str,
+                                   fingerprint: str, **values) -> dict:
+        """Upsert un état de reprise sans créer de révision métier prématurée."""
+        values = copy.deepcopy(values)
+        values["updated_at"] = _now()
+        self.checkpoints.update_one(
+            {"project_id": project_id, "kind": kind, "fingerprint": fingerprint},
+            {"$set": values, "$setOnInsert": {
+                "project_id": project_id, "kind": kind,
+                "fingerprint": fingerprint, "created_at": _now(),
+            }}, upsert=True)
+        return self.get_generation_checkpoint(project_id, kind, fingerprint) or {}
+
+    def clear_generation_checkpoint(self, project_id: str, kind: str,
+                                    fingerprint: str) -> None:
+        self.checkpoints.delete_one({
+            "project_id": project_id, "kind": kind,
+            "fingerprint": fingerprint,
+        })
 
     def list_revisions(self, project_id: str, kind: str | None = None) -> list[dict]:
         query = {"project_id": project_id}
@@ -207,9 +278,21 @@ class SraRepository:
                         row.get("ro_type_id"), row.get("canonical_type"), row.get("definition"),
                         "; ".join(row.get("characterization", [])), row.get("review_status", "proposed"), proof)
                 else:
-                    content = "Relation {}: {} -> {}\nCatégorie cible: {}\nJustification: {}\nStatut revue: {}\nPreuves: {}".format(
-                        row.get("to_id"), row.get("ro_canonical_type"), row.get("target_name"),
-                        row.get("target_category"), row.get("rationale"), row.get("review_status", "proposed"), proof)
+                    if row.get("attacks") is not None:
+                        scenarios = "\n".join(
+                            "{}: {} | Objectif: {} | Cibles: {} | Justification: {} | Preuves: {}".format(
+                                item.get("scenario_id"), item.get("attack"), item.get("objective"),
+                                ", ".join(item.get("target_names", [])), item.get("rationale"),
+                                " | ".join("{}: {}".format(e.get("source"), e.get("quote"))
+                                           for e in item.get("evidence", [])))
+                            for item in row.get("attacks", []))
+                        content = "TO {}: {}\nDéfinition: {}\nScénarios d attaque:\n{}\nStatut revue: {}".format(
+                            row.get("to_id"), row.get("ro_canonical_type"), row.get("ro_definition", ""),
+                            scenarios, row.get("review_status", "proposed"))
+                    else:
+                        content = "Relation {}: {} -> {}\nCatégorie cible: {}\nJustification: {}\nStatut revue: {}\nPreuves: {}".format(
+                            row.get("to_id"), row.get("ro_canonical_type"), row.get("target_name"),
+                            row.get("target_category"), row.get("rationale"), row.get("review_status", "proposed"), proof)
                 source = "SRA — {} — {} v{}".format(
                     revision.get("project_name"), kind.upper(), revision.get("sequence"))
                 chunks.append({"source": source, "content": content,

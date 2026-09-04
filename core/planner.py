@@ -27,6 +27,7 @@ import time
 
 from utils.logging_config import get_logger
 from utils.tracing import start_trace, span
+from utils.task_metrics import operation
 from env_config import PLANNER_MODEL
 
 from core.agent import (
@@ -245,7 +246,7 @@ class PlannerAgent:
 
         t0 = time.perf_counter()
         with start_trace("rag.planner", question=question, model=PLANNER_MODEL) as tr:
-            with span("plan"):
+            with span("plan"), operation("plan"):
                 plan = build_plan(question, self.llm, history_block)
             if plan is None:
                 # REPLI silencieux : comportement agent historique, événements inclus.
@@ -403,7 +404,8 @@ class PlannerAgent:
             "Réponds UNIQUEMENT avec la requête, sur une seule ligne, sans commentaire."
         )
         try:
-            out = self.llm.invoke(prompt)
+            with operation("refine"):
+                out = self.llm.invoke(prompt)
         except Exception as e:
             logger.warning("[planner] Affinage de sous-question impossible : %s", e)
             return None
@@ -415,8 +417,9 @@ class PlannerAgent:
                 budget: int) -> list[dict] | None:
         """Révision des étapes restantes (validation souple : 1 étape suffit)."""
         try:
-            raw = _llm_json_call(self.llm, _replan_prompt(question, notes,
-                                                          failed_step, budget))
+            with operation("replan"):
+                raw = _llm_json_call(self.llm, _replan_prompt(question, notes,
+                                                              failed_step, budget))
         except Exception as e:
             logger.warning("[planner] Re-planification impossible : %s", e)
             return None

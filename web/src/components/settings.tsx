@@ -14,7 +14,13 @@ type Settings = {
   values: Record<string, string | number | boolean>;
   default_system_prompt: string;
 };
-type Models = { models: string[]; routing: Record<string, string>; vectors: number | null };
+type Models = {
+  models: string[];
+  generation_models: string[];
+  embedding_models: string[];
+  routing: Record<string, string>;
+  vectors: number | null;
+};
 
 function Row({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
@@ -83,7 +89,7 @@ export function SettingsView() {
         ]);
         setSettings(s);
         setModels(m);
-        setEnv(Object.fromEntries(Object.entries(s.values).map(([k, v]) => [k, String(v)])));
+        setEnv(Object.fromEntries(Object.entries(s.values).map(([k, v]) => [k, v == null ? "" : String(v)])));
       } catch {
         setError("API hors ligne — lancer python serve.py --web");
       }
@@ -117,8 +123,11 @@ export function SettingsView() {
     );
 
   const genModel = env.GEN_MODEL ?? "";
-  const optionsFor = (selected: string) =>
-    Array.from(new Set([selected, ...models.models].filter(Boolean)));
+  const optionsFor = (selected: string, embedding = false) =>
+    Array.from(new Set([
+      selected,
+      ...(embedding ? models.embedding_models : models.generation_models),
+    ].filter(Boolean)));
 
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-6">
@@ -157,7 +166,7 @@ export function SettingsView() {
             <Row key={key} label={label} hint={hint}>
               <select value={env[key] ?? ""} onChange={(e) => setEnv({ ...env, [key]: e.target.value })} className={inputCls + " max-w-64"}>
                 {!env[key] && <option value="">Modèle hérité (défaut)</option>}
-                {optionsFor(env[key] ?? "").map((m) => <option key={m} value={m}>{m}</option>)}
+                {optionsFor(env[key] ?? "", key === "EMBED_MODEL").map((m) => <option key={m} value={m}>{m}</option>)}
               </select>
             </Row>
           ))}
@@ -166,7 +175,7 @@ export function SettingsView() {
              hint="Sert aux prochaines réponses. « Charger » l'épingle en VRAM et l'active à chaud.">
           <select value={genModel} onChange={(e) => setEnv({ ...env, GEN_MODEL: e.target.value })}
                   className={inputCls}>
-            {(models.models.length ? models.models : [genModel]).map((m) => (
+            {optionsFor(genModel).map((m) => (
               <option key={m} value={m}>{m}</option>
             ))}
           </select>

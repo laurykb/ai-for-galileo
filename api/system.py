@@ -11,6 +11,13 @@ from utils.mongo import get_client
 router = APIRouter()
 
 
+@router.get("/api/task-metrics")
+def task_metrics(limit: int = 20, kind: str | None = None) -> dict:
+    """Accomplissement, trajectoire et efficacité des dernières tâches Chat/SRA."""
+    from utils.task_metrics import recent
+    return {"tasks": recent(limit=max(1, min(limit, 100)), kind=kind)}
+
+
 @router.get("/api/perf")
 def perf_stats() -> dict:
     """Performance d'inférence de CE process API : tokens/s, time-to-first-token,
@@ -20,7 +27,7 @@ def perf_stats() -> dict:
     return {"gpu": [{"used": int(u), "total": int(t)} for u, t in (perf.gpu_memory() or [])],
             "hardware_profile": perf.hardware_profile(),
             "aggregate": perf.aggregate(rows) if rows else None,
-            "rows": [{"model": r["model"], "gen_tokens": r["gen_tokens"],
+            "rows": [{"model": r["model"], "role": r.get("role"), "task_id": r.get("task_id"), "prompt_tokens": r.get("prompt_tokens", 0), "gen_tokens": r["gen_tokens"], "prompt_eval_s": round(r.get("prompt_eval_s", 0), 2), "load_s": round(r.get("load_s", 0), 2), "decode_s": round(r.get("gen_s", 0), 2),
                       "tok_per_s": round(r["tok_per_s"], 1) if r["tok_per_s"] else None,
                       "ttft_s": round(r["ttft_s"], 2) if r["ttft_s"] else None,
                       "total_s": round(r["total_s"], 1)} for r in rows[:30]]}
@@ -71,7 +78,13 @@ def models() -> dict:
         vectors = get_vector_store().count()
     except Exception:
         pass
-    return {"models": names, "routing": routing, "vectors": vectors}
+    from env_config import EMBED_MODEL
+    embedding_models = [name for name in names if name == EMBED_MODEL or any(
+        marker in name.lower() for marker in ("embed", "bge-", "e5-")
+    )]
+    generation_models = [name for name in names if name not in embedding_models]
+    return {"models": names, "generation_models": generation_models,
+            "embedding_models": embedding_models, "routing": routing, "vectors": vectors}
 
 
 class ModelAction(BaseModel):
@@ -85,13 +98,16 @@ def set_generation_model(body: ModelAction) -> dict:
     boutons Charger/Décharger du Streamlit)."""
     import requests
     from env_config import OLLAMA_HOST
+    if body.action not in {"load", "unload"} or not body.model.strip():
+        raise HTTPException(422, "Action ou modèle invalide.")
     try:
+        keep = -1 if body.action == "load" else 0
+        response = requests.post(f"{OLLAMA_HOST}/api/generate",
+                                 json={"model": body.model, "keep_alive": keep}, timeout=600)
+        response.raise_for_status()
         if body.action == "load":
             from core.model_router import set_generate_model
             set_generate_model(body.model)
-        keep = -1 if body.action == "load" else 0
-        requests.post(f"{OLLAMA_HOST}/api/generate",
-                      json={"model": body.model, "keep_alive": keep}, timeout=30)
         return {"ok": True}
     except Exception as e:
         raise HTTPException(502, f"Ollama : {e}")
@@ -132,6 +148,8 @@ def save_settings(body: EnvUpdates) -> dict:
     """Écrit les réglages dans .env (liste blanche). Prend effet au prochain
     démarrage de l'API (comme dans le Streamlit)."""
     updates = {k: v for k, v in body.updates.items() if k in _ENV_ALLOWED}
+    if any(len(v) > 1000 or any(c in v for c in "\r\n\x00") for v in updates.values()):
+        raise HTTPException(422, "Valeur de configuration invalide.")
     if not updates:
         raise HTTPException(400, "Aucune clé autorisée dans la demande.")
     from pathlib import Path
@@ -148,5 +166,16 @@ def save_settings(body: EnvUpdates) -> dict:
                 continue
         out.append(line)
     out.extend(f"{k}={v}" for k, v in remaining.items())
-    env_path.write_text("\n".join(out) + "\n", encoding="utf-8")
+    tmp_path = env_path.with_suffix(".env.tmp")
+    rendered = "\n".join(out) + "\n"
+    tmp_path.write_text(rendered, encoding="utf-8")
+    try:
+        tmp_path.replace(env_path)
+    except OSError as exc:
+        # .env est un fichier bind-monté dans le déploiement hors ligne.
+        # rename(2) refuse alors de remplacer ce point de montage (EBUSY).
+        if exc.errno != 16:
+            raise
+        env_path.write_text(rendered, encoding="utf-8")
+        tmp_path.unlink(missing_ok=True)
     return {"ok": True, "saved": sorted(updates)}

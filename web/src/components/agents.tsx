@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { API_BASE, getJSON } from "@/lib/api";
 import { useExpert } from "@/components/expert-toggle";
@@ -11,24 +11,40 @@ type PromptItem = {
   default: string; active: string; overridden: boolean; variables: string[]; version: number;
 };
 type EvalStatus = { status: "idle" | "queued" | "running" | "success" | "error"; stage?: string };
+export type PromptGroup = "chat" | "ro" | "to";
 
-export function AgentsView() {
+const PROMPT_GROUPS: Array<{ id: PromptGroup; label: string; description: string }> = [
+  { id: "chat", label: "Chat / RAG", description: "Prompts de conversation, recherche, planification et synthèse." },
+  { id: "ro", label: "Table RO", description: "Agents d’extraction, d’adjudication et de finalisation des Risk Origin Types." },
+  { id: "to", label: "Table TO", description: "Agents d’extraction des cibles, de construction et de consolidation des scénarios." },
+];
+
+function promptGroup(key: string): PromptGroup {
+  if (key.startsWith("sra.ro.")) return "ro";
+  if (key.startsWith("sra.to.")) return "to";
+  return "chat";
+}
+
+export function AgentsView({ groups = ["chat", "ro", "to"] }: { groups?: PromptGroup[] }) {
   const expert = useExpert();
   const [items, setItems] = useState<PromptItem[] | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [status, setStatus] = useState<string | null>(null);
   const [evalStatus, setEvalStatus] = useState<EvalStatus>({ status: "idle" });
+  const [activeGroup, setActiveGroup] = useState<PromptGroup>(groups[0] ?? "chat");
+  const promptScope = groups.every((group) => group === "chat") ? "rag"
+    : groups.every((group) => group === "ro" || group === "to") ? "sra" : "";
 
-  const load = async () => {
-    const data = await getJSON<{ prompts: PromptItem[] }>("/api/prompts");
+  const load = useCallback(async () => {
+    const data = await getJSON<{ prompts: PromptItem[] }>(`/api/prompts${promptScope ? `?scope=${promptScope}` : ""}`);
     setItems(data.prompts);
     setDrafts(Object.fromEntries(data.prompts.map((p) => [p.key, p.active])));
-  };
+  }, [promptScope]);
 
   useEffect(() => {
     const timer = setTimeout(() => { void load().catch(() => setItems([])); }, 0);
     return () => clearTimeout(timer);
-  }, []);
+  }, [load]);
 
   useEffect(() => {
     const poll = () => getJSON<EvalStatus>("/api/prompt-evals/status")
@@ -68,15 +84,32 @@ export function AgentsView() {
   if (!items) return <p className="flex gap-2 text-xs text-fg-muted"><Spinner /> Chargement…</p>;
   if (!expert) return <Banner tone="neutral">Activez le mode Expert pour inspecter et modifier les prompts.</Banner>;
   if (!items.length) return <Banner tone="bad">API des prompts indisponible.</Banner>;
+  const visibleItems = items.filter((item) => groups.includes(promptGroup(item.key)) && promptGroup(item.key) === activeGroup);
+  const group = PROMPT_GROUPS.find((item) => item.id === activeGroup) ?? PROMPT_GROUPS[0];
 
   return (
     <div className="mt-6 space-y-4">
       {status && <Banner tone="neutral">{status}</Banner>}
       <Banner tone="neutral">
         Toute modification est versionnée et appliquée aux prochaines requêtes.
-        Validez-la ensuite sur le golden set avant adoption.
+        {activeGroup === "chat"
+          ? " Validez-la ensuite sur le golden set RAG avant adoption."
+          : " Validez-la ensuite sur un corpus et des métriques SRA comparables avant adoption."}
       </Banner>
-      <section className="rounded-xl border border-edge bg-surface/50 p-4">
+      {groups.length > 1 && <nav className="flex flex-wrap gap-2 rounded-xl border border-edge bg-surface/50 p-2" aria-label="Familles d’agents">
+        {PROMPT_GROUPS.filter((item) => groups.includes(item.id)).map((item) => {
+          const count = items.filter((prompt) => promptGroup(prompt.key) === item.id).length;
+          return <button key={item.id} onClick={() => setActiveGroup(item.id)}
+            className={"cursor-pointer rounded-lg border px-3 py-2 text-sm " + (activeGroup === item.id ? "border-accent bg-surface-2 text-foreground" : "border-edge text-fg-muted")}>
+            {item.label} <span className="ml-1 text-[10px] text-fg-faint">{count}</span>
+          </button>;
+        })}
+      </nav>}
+      <div>
+        <h3 className="text-sm font-semibold text-foreground">{group.label}</h3>
+        <p className="mt-1 text-xs text-fg-muted">{group.description}</p>
+      </div>
+      {activeGroup === "chat" && <section className="rounded-xl border border-edge bg-surface/50 p-4">
         <h3 className="text-sm font-semibold text-foreground">Validation A/B sur le golden set</h3>
         <p className="mt-1 text-xs text-fg-muted">Compare les prompts par défaut aux versions actives avec les mêmes modèles et la politique adaptative.</p>
         <div className="mt-3 flex items-center gap-3">
@@ -86,8 +119,8 @@ export function AgentsView() {
           </button>
           <span className="text-xs text-fg-faint">{evalStatus.status}{evalStatus.stage ? ` · ${evalStatus.stage}` : ""}</span>
         </div>
-      </section>
-      {items.map((item) => (
+      </section>}
+      {visibleItems.map((item) => (
         <section key={item.key} className="rounded-xl border border-edge bg-surface/50 p-4">
           <div className="flex items-start justify-between gap-3">
             <div>

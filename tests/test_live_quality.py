@@ -12,7 +12,7 @@ def _events(text):
             if line.startswith("data: ")]
 
 
-def test_rag_force_emits_quality_after_done(monkeypatch):
+def test_rag_emits_deterministic_metrics_without_automatic_judge(monkeypatch):
     import core.ask
     chunk = {"doc": "preuve", "meta": {"source": "d.md"}}
     monkeypatch.setattr(core.ask, "process_query_stream",
@@ -26,9 +26,10 @@ def test_rag_force_emits_quality_after_done(monkeypatch):
     evs = _events(TestClient(app).post("/api/ask", json={
         "question": "q", "mode": "rag", "session_id": "s"}).text)
     kinds = [e["type"] for e in evs]
-    assert kinds.index("done") < kinds.index("eval")
-    score = next(e for e in evs if e["type"] == "eval")
-    assert score["faithfulness"] == 0.9
+    assert "eval" not in kinds
+    assert kinds.index("done") < kinds.index("task_metrics")
+    metrics = next(e["metrics"] for e in evs if e["type"] == "task_metrics")
+    assert metrics["quality"]["semantic_judge"] == "not_run"
 
 
 def test_run_quality_persists(monkeypatch):

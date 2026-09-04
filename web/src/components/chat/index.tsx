@@ -13,18 +13,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 
-import { API_BASE, getJSON, type SourcesResponse } from "@/lib/api";
+import { apiFetch, getJSON, type SourcesResponse } from "@/lib/api";
 import { streamAsk } from "@/lib/sse";
-import { listArtifacts, type SraArtifact } from "@/lib/sra";
 import { loadPrefs } from "@/lib/prefs";
 import { useEngineHealth, useElapsedLabel } from "@/lib/use-health";
-import type { ChatMessage, ChunkView, PlanStep, SessionInfo } from "@/lib/types";
+import type { ChatMessage, ChunkView, PlanStep, SessionInfo, TaskProgress } from "@/lib/types";
 import { useExpert } from "@/components/expert-toggle";
 import { Dot, Spinner } from "@/components/ui";
-import { AssistantMessage, NOT_FOUND_MESSAGE } from "@/components/chat/blocks";
+import { AssistantMessage, NOT_FOUND_MESSAGE, ProcessingTraceBlock } from "@/components/chat/blocks";
 import { AnswerMarkdown } from "@/components/chat/markdown";
 import { SessionsSidebar } from "@/components/chat/sessions-sidebar";
 import { Composer, type Mode } from "@/components/chat/composer";
+import { downloadConversation } from "@/components/chat/export-conversation";
 
 const EXAMPLES = [
   "Quelles sont les exigences de chiffrement ?",
@@ -44,8 +44,6 @@ type PlanView = { steps: PlanStep[]; statuts: StepStatus[]; replanned: boolean }
 export function Chat() {
   const [docs, setDocs] = useState<{ name: string; chunks: number }[]>([]);
   const [selected, setSelected] = useState<string>("");
-  const [artifacts, setArtifacts] = useState<SraArtifact[]>([]);
-  const [selectedArtifacts, setSelectedArtifacts] = useState<string[]>([]);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -53,6 +51,7 @@ export function Chat() {
   const [nChunks, setNChunks] = useState<number | null>(null);
   const [partial, setPartial] = useState<string>("");
   const [agentTrace, setAgentTrace] = useState<string[]>([]);
+  const [processingTrace, setProcessingTrace] = useState<TaskProgress[]>([]);
   const [plan, setPlan] = useState<PlanView | null>(null);
   const [route, setRoute] = useState<string>("");
   const [mode, setMode] = useState<Mode>("auto");
@@ -97,9 +96,8 @@ export function Chat() {
     const t = setTimeout(() => {
       refreshDocs();
       refreshSessions();
-      listArtifacts().then((s) => setArtifacts(s.artifacts)).catch(() => setArtifacts([]));
-      getJSON<{ models: string[]; routing: Record<string, string> }>("/api/models")
-        .then((m) => { setModels(m.models); setGenModel(m.routing?.generate ?? m.models[0] ?? ""); })
+      getJSON<{ models: string[]; generation_models?: string[]; routing: Record<string, string> }>("/api/models")
+        .then((m) => { setModels(m.generation_models ?? m.models); setGenModel(m.routing?.generate ?? m.models[0] ?? ""); })
         .catch(() => setModels([]));
     }, 0);
     return () => clearTimeout(t);
@@ -108,7 +106,7 @@ export function Chat() {
   const loadModel = async (model: string) => {
     setGenModel(model);
     setModelStatus("chargement…");
-    const res = await fetch(`${API_BASE}/api/models/generate`, {
+    const res = await apiFetch("/api/models/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model, action: "load" }),
@@ -125,7 +123,6 @@ export function Chat() {
     setSessionId(null);
     setMessages([]);
     setSelected("");
-    setSelectedArtifacts([]);
   };
 
   const openSession = async (s: SessionInfo) => {
@@ -155,6 +152,7 @@ export function Chat() {
     setNChunks(null);
     setPartial("");
     setAgentTrace([]);
+    setProcessingTrace([]);
     setPlan(null);
     setRoute("");
 
@@ -163,6 +161,9 @@ export function Chat() {
     let gotDone = false;
     let pushed = false; // le message a-t-il déjà été ajouté au fil ?
     const trace: string[] = [];
+    // Copie locale : le callback SSE doit disposer immédiatement de chaque
+    // étape, sans attendre le prochain rendu React.
+    const progressTrace: TaskProgress[] = [];
     const controller = new AbortController();
     abortRef.current = controller;
 
@@ -171,7 +172,6 @@ export function Chat() {
         question: q, source: selected || null, history,
         parent_child: prefs.parentChild, self_rag: prefs.selfRag,
         system_prompt: prefs.systemPrompt, mode, session_id: sessionId,
-        artifact_revision_ids: selectedArtifacts,
       }, (ev) => {
         if (ev.type === "session") {
           setSessionId(ev.id);
@@ -239,6 +239,9 @@ export function Chat() {
           draft.content += ev.text;
           setPartial(draft.content);
         } else if (ev.type === "sources") draft.citations = ev.citations;
+        else if (ev.type === "persistence" && !ev.saved) {
+          draft.persistenceWarning = ev.message ?? "Conversation non sauvegardée.";
+        }
         else if (ev.type === "attribution") {
           // Attribution par affirmation : arrive APRÈS done (passe post-hoc)
           // -> mise à jour du dernier message (marqueurs déjà affichés).
@@ -251,6 +254,23 @@ export function Chat() {
               return [...ms.slice(0, -1), { ...last, attribution }];
             }
             return ms;
+          });
+        } else if (ev.type === "task_progress") {
+          const { type: _type, ...progress } = ev;
+          void _type;
+          progressTrace.push(progress);
+          setProcessingTrace([...progressTrace]);
+        } else if (ev.type === "answer_contract") {
+          draft.evidenceDossier = ev.dossier;
+        } else if (ev.type === "answer_validation") {
+          draft.answerValidation = ev.validation;
+        } else if (ev.type === "analysis_artifact") {
+          draft.analysisArtifact = ev.artifact;
+        } else if (ev.type === "task_metrics") {
+          draft.taskMetrics = ev.metrics;
+          setMessages((ms) => {
+            const last = ms[ms.length - 1];
+            return last?.role === "assistant" ? [...ms.slice(0, -1), { ...last, taskMetrics: ev.metrics }] : ms;
           });
         } else if (ev.type === "eval") {
           draft.eval = ev;
@@ -267,11 +287,13 @@ export function Chat() {
           pushed = true;
           if (!ev.found && !draft.content) draft.content = NOT_FOUND_MESSAGE;
           if (trace.length) draft.reasoning = trace.join("\n\n");
+          draft.processingTrace = [...progressTrace];
           if (chunks.length) draft.chunks = chunks;
           setMessages((ms) => [...ms, { ...draft }]);
           setPartial("");
           setAgentTrace([]);
           setPlan(null);
+          setProcessingTrace([]);
           setPhase("idle");
           refreshSessions(); // le titre/updated_at ont pu changer
         } else if (ev.type === "error") {
@@ -291,13 +313,15 @@ export function Chat() {
     if (!pushed) {
       if (chunks.length) draft.chunks = chunks;
       if (trace.length) draft.reasoning = trace.join("\n\n");
+      if (progressTrace.length) draft.processingTrace = [...progressTrace];
       setMessages((ms) => [...ms, { ...draft }]);
     }
     setPartial("");
     setAgentTrace([]);
+    setProcessingTrace([]);
     setPlan(null);
     setPhase("idle");
-  }, [busy, messages, selected, selectedArtifacts, mode, sessionId, refreshSessions]);
+  }, [busy, messages, selected, mode, sessionId, refreshSessions]);
 
   // Index du dernier message utilisateur (siège du bouton « modifier »).
   const lastUserIndex = messages.reduce(
@@ -307,13 +331,19 @@ export function Chat() {
    * retiré du fil ET de la session persistée avant de re-poser la question. */
   const send = useCallback(async (q: string) => {
     if (!editing) return ask(q);
-    setEditing(false);
     const base = lastUserIndex >= 0 ? messages.slice(0, lastUserIndex) : messages;
     if (sessionId) {
       // Attendre la troncature : /api/ask ré-appendra la question éditée.
-      await fetch(`${API_BASE}/api/sessions/${sessionId}/last-exchange`,
-                  { method: "DELETE" }).catch(() => null);
+      const response = await apiFetch(`/api/sessions/${sessionId}/last-exchange`,
+                                      { method: "DELETE" }).catch(() => null);
+      if (!response?.ok) {
+        setModelStatus(
+          `Modification impossible : ${response ? `HTTP ${response.status}` : "API indisponible"}`,
+        );
+        return;
+      }
     }
+    setEditing(false);
     return ask(q, base);
   }, [editing, ask, lastUserIndex, messages, sessionId]);
 
@@ -323,14 +353,17 @@ export function Chat() {
     setPhase("generate");
     setPartial("");
     try {
-      const res = await fetch(`${API_BASE}/api/regenerate`, {
+      const res = await apiFetch("/api/regenerate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question: lastUser.content, chunks: selectedChunks,
                                system_prompt: loadPrefs().systemPrompt,
                                session_id: sessionId }),
       });
-      const d = await res.json();
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(String((d as { detail?: unknown }).detail ?? `HTTP ${res.status}`));
+      }
       setMessages((ms) => {
         const i = ms.map((m) => m.role).lastIndexOf("assistant");
         if (i < 0) return ms;
@@ -342,7 +375,15 @@ export function Chat() {
                     attribution: undefined };
         return next;
       });
-    } catch { /* silencieux : le message existant reste */ }
+    } catch (e) {
+      setMessages((ms) => {
+        const i = ms.map((m) => m.role).lastIndexOf("assistant");
+        if (i < 0) return ms;
+        const next = [...ms];
+        next[i] = { ...next[i], error: `Régénération impossible (${String(e)}).` };
+        return next;
+      });
+    }
     setPhase("idle");
   };
 
@@ -367,12 +408,19 @@ export function Chat() {
     fd.append("mode", String(p.mode));
     fd.append("raptor", String(p.raptor));
     fd.append("enh_model", String(p.enh_model ?? ""));
-    const res = await fetch(`${API_BASE}/api/documents`, { method: "POST", body: fd })
+    const res = await apiFetch("/api/documents", { method: "POST", body: fd })
       .catch(() => null);
     if (fileRef.current) fileRef.current.value = "";
     if (!res?.ok) {
+      const payload = res ? await res.json().catch(() => ({})) : {};
+      const detail = (payload as { detail?: unknown }).detail;
+      const reason = typeof detail === "string"
+        ? detail
+        : detail && typeof detail === "object" && "message" in detail
+          ? String((detail as { message: unknown }).message)
+          : res ? `HTTP ${res.status}` : "API indisponible";
       setAttach(null);
-      setAttachError(`Dépôt impossible pour « ${label} » — type non accepté ou API indisponible.`);
+      setAttachError(`Dépôt impossible pour « ${label} » — ${reason}`);
       return;
     }
     // Suivi de TOUTES les tâches du lot jusqu'au bout.
@@ -437,6 +485,17 @@ export function Chat() {
 
       {/* Fil de conversation. */}
       <section className="flex min-w-0 flex-1 flex-col">
+        {messages.length > 0 && (
+          <div className="mb-1 flex justify-end">
+            <button
+              onClick={() => downloadConversation(messages, false)}
+              title="Télécharge la conversation en Markdown avec ses sources."
+              className="cursor-pointer text-[11px] text-fg-faint transition-colors hover:text-foreground"
+            >
+              Exporter la conversation (.md)
+            </button>
+          </div>
+        )}
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pb-3 pr-1">
           {messages.length === 0 && !busy && (
             <div className="rise-in flex h-full flex-col items-center justify-center text-center">
@@ -553,6 +612,9 @@ export function Chat() {
                   </ul>
                 </div>
               )}
+              {processingTrace.length > 0 && (
+                <ProcessingTraceBlock trace={processingTrace} route={route} live />
+              )}
               {agentTrace.length > 0 && (
                 <div className="chat-md mb-2 border-l-2 border-edge pl-3 text-xs text-fg-muted">
                   <ReactMarkdown>{agentTrace.join("\n\n")}</ReactMarkdown>
@@ -598,22 +660,6 @@ export function Chat() {
               Annuler
             </button>
           </div>
-        )}
-        {artifacts.length > 0 && (
-          <details className="mb-2 rounded-xl border border-border bg-surface-2 px-3 py-2 text-xs">
-            <summary className="cursor-pointer font-medium text-foreground">
-              Analyses SRA à interroger{selectedArtifacts.length ? " (" + selectedArtifacts.length + ")" : ""}
-            </summary>
-            <p className="mt-2 text-fg-muted">Sélectionnez une ou plusieurs versions pour les questionner ou les comparer dans le Chat.</p>
-            <div className="mt-2 grid gap-2 sm:grid-cols-2">
-              {artifacts.map((artifact) => (
-                <label key={artifact.revision_id} className="flex cursor-pointer items-center gap-2 rounded-lg border border-border px-2 py-2">
-                  <input type="checkbox" checked={selectedArtifacts.includes(artifact.revision_id)} onChange={() => setSelectedArtifacts((current) => current.includes(artifact.revision_id) ? current.filter((id) => id !== artifact.revision_id) : [...current, artifact.revision_id])} />
-                  <span>{artifact.label}</span>
-                </label>
-              ))}
-            </div>
-          </details>
         )}
         <Composer
           input={input} setInput={setInput}

@@ -2,7 +2,7 @@
 """
 Lance tout d'un coup : MongoDB + Ollama, puis l'application.
 
-    python serve.py            # interface Next.js (API FastAPI :8000 + front :3000)
+    python serve.py            # interface Next.js (API FastAPI :8001 + front :3001)
 
 - Démarre les services seulement s'ils ne tournent pas déjà.
 - Multi-OS : utilise `mongod` / `ollama` du PATH, ou les chemins MONGO_BIN /
@@ -21,6 +21,9 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
+OFFLINE_IMAGES = ROOT / "images.tar"
+OFFLINE_CHECKSUMS = ROOT / "SHA256SUMS"
+OFFLINE_INSTALLED = ROOT / ".offline-installed"
 
 try:
     from dotenv import load_dotenv
@@ -44,6 +47,31 @@ def _resolve(name: str, env_var: str) -> str | None:
 
 def _spawn(cmd: list[str], env: dict | None = None) -> None:
     subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def is_offline_bundle() -> bool:
+    return OFFLINE_IMAGES.is_file() and OFFLINE_CHECKSUMS.is_file()
+
+
+def run_offline_bundle() -> None:
+    docker = shutil.which("docker")
+    if not docker:
+        raise RuntimeError("Docker est requis sur la machine cible hors ligne.")
+    if subprocess.run([docker, "compose", "version"], cwd=ROOT,
+                      stdout=subprocess.DEVNULL,
+                      stderr=subprocess.DEVNULL).returncode:
+        raise RuntimeError("Le plugin `docker compose` est absent ou inutilisable.")
+    deploy = ROOT / "deploy" / "offline.sh"
+    if not deploy.is_file():
+        raise RuntimeError(f"Script de déploiement absent : {deploy}")
+    print("Paquet Docker hors ligne détecté.")
+    if not OFFLINE_INSTALLED.is_file():
+        print("Installation locale des images et modèles embarqués...")
+        subprocess.run(["bash", str(deploy), "install"],
+                       cwd=ROOT, check=True)
+    subprocess.run(["bash", str(deploy), "start"],
+                   cwd=ROOT, check=True)
+    print("\nDémarrage hors ligne terminé.")
 
 
 def start_mongo() -> None:
@@ -71,8 +99,8 @@ def start_ollama() -> None:
     # FLASH_ATTENTION=0 : évite des NaN de bge-m3 sur certains GPU. NUM_PARALLEL=1
     # et KEEP_ALIVE=5m : adaptés à une VRAM contrainte (évite de pinner un modèle).
     env = {**os.environ, "OLLAMA_FLASH_ATTENTION": "0",
-           "OLLAMA_NUM_PARALLEL": os.environ.get("OLLAMA_NUM_PARALLEL", "4"),
-           "OLLAMA_MAX_LOADED_MODELS": os.environ.get("OLLAMA_MAX_LOADED_MODELS", "4"),
+           "OLLAMA_NUM_PARALLEL": os.environ.get("OLLAMA_NUM_PARALLEL", "1"),
+           "OLLAMA_MAX_LOADED_MODELS": os.environ.get("OLLAMA_MAX_LOADED_MODELS", "1"),
            "OLLAMA_SCHED_SPREAD": os.environ.get("OLLAMA_SCHED_SPREAD", "1"),
            "OLLAMA_KEEP_ALIVE": os.environ.get("OLLAMA_KEEP_ALIVE", "15m")}
     print("Ollama : démarrage...")
@@ -86,6 +114,18 @@ def _wait(port: int, name: str, timeout: int = 30) -> None:
             return
         time.sleep(1)
     print(f"  {name} : pas prêt après {timeout}s (l'app démarre quand même).")
+
+
+def _ensure_app_ports_available(api_port: int, web_port: int) -> None:
+    """Refuse un décalage silencieux de Next.js vers le port d une autre app."""
+    occupied = [str(port) for port in (api_port, web_port) if _port_open(port)]
+    if occupied:
+        raise RuntimeError(
+            "Port(s) réservé(s) à AI for SSH v3 déjà occupé(s) : "
+            + ", ".join(occupied)
+            + ". Arrêtez l ancienne instance ou définissez API_PORT et WEB_PORT "
+              "dans .env. Aucun port de remplacement ne sera choisi silencieusement."
+        )
 
 
 # ─────────────────────────── Pre-flight (portabilité) ───────────────────────────
@@ -165,24 +205,32 @@ def check_setup():
 
 
 def run_web() -> None:
-    """Nouvelle interface : API FastAPI (:8000) + front Next.js (:3000).
-
-    L'API tourne en arrière-plan ; le front reste au premier plan pour que
-    Ctrl+C arrête tout (l'API est tuée à la sortie).
-    """
+    """Interface v3 sur des ports fixes, distincts de AI-for-SSH export."""
+    api_port = int(os.environ.get("API_PORT", "8001"))
+    web_port = int(os.environ.get("WEB_PORT", "3001"))
+    _ensure_app_ports_available(api_port, web_port)
     api = subprocess.Popen([sys.executable, "-m", "uvicorn", "api.main:app",
-                            "--port", "8000"], cwd=ROOT)
-    _wait(8000, "API")
-    print("\nFront Next.js : http://localhost:3000 (API : http://127.0.0.1:8000)\n")
+                            "--host", "127.0.0.1", "--port", str(api_port)], cwd=ROOT)
+    _wait(api_port, "API")
+    print(f"\nAI for SSH v3 : http://localhost:{web_port} "
+          f"(API : http://127.0.0.1:{api_port})\n")
     try:
-        # dev.sh charge nvm (Node >= 20) et fait `npm install` au premier lancement.
-        subprocess.run(["bash", str(ROOT / "web" / "dev.sh")])
+        env = {**os.environ, "PORT": str(web_port),
+               "INTERNAL_API_BASE": f"http://127.0.0.1:{api_port}"}
+        subprocess.run(["bash", str(ROOT / "web" / "dev.sh")], env=env, check=True)
     finally:
         api.terminate()
 
 
 def main() -> None:
+    if is_offline_bundle():
+        run_offline_bundle()
+        return
     start_mongo()
+    if (ROOT / "deploy" / "offline.sh").is_file() and not (ROOT / "web").is_dir():
+        raise RuntimeError(
+            "Paquet hors ligne incomplet : images.tar ou SHA256SUMS est absent."
+        )
     start_ollama()
     _wait(27017, "MongoDB")
     _wait(11434, "Ollama")
@@ -192,4 +240,16 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except RuntimeError as exc:
+        print(f"\nDémarrage impossible : {exc}", file=sys.stderr)
+        raise SystemExit(2) from None
+    except subprocess.CalledProcessError as exc:
+        print(
+            f"\nÉchec du déploiement (étape: {exc.cmd[-1]}). "
+            "Consultez les messages ci-dessus puis lancez "
+            "`bash deploy/offline.sh diagnose`.",
+            file=sys.stderr,
+        )
+        raise SystemExit(exc.returncode) from None

@@ -1,6 +1,6 @@
 # Roadmap active Codex
 
-Dernière consolidation : 2026-08-03.
+Dernière consolidation : 2026-08-31.
 
 Ce document adapte les plans historiques de `docs/superpowers/` à un workflow agentique indépendant de Claude. Les anciens briefs et rapports restent des preuves et archives; cette roadmap est le point d’entrée opérationnel.
 
@@ -131,3 +131,13 @@ Comparatif sur 6 requêtes structurées, mêmes modèles et dataset : réparatio
 ## Décision SRA (2026-07-28)
 
 L ancienne méthodologie, ses ateliers et son classeur contractuel sont abandonnés. Le produit suit désormais la méthode SRA. Sa première étape produit une table Risk Objectives à deux colonnes : catégorie d attaquant et objectifs visés / justification. La table est générée depuis les documents disponibles, revue dans l interface puis exportée en CSV ou XLSX.
+
+Mise à jour 2026-08-05 : la taxonomie RO est désormais versionnée et configurable par dossier, avec un mode extensible contrôlé pour les familles inconnues. Les scénarios TO sont caractérisés par propriété de sécurité, domaine cible et motivation avant leur regroupement par RO Type. Ces signaux restent souples et auditables; aucune combinaison n est supprimée par une règle métier codée en dur.
+
+Mise à jour 2026-08-06 : la vue TO destinée à la décision ne matérialise plus chaque couple RO Type × domaine. Elle regroupe par effet de sécurité, attribue un seul domaine principal et conserve les domaines secondaires comme facettes. La table exhaustive demeure inchangée et chaque scénario source doit apparaître exactement une fois dans la vue compacte. Le budget de 20 est un plafond de lisibilité, pas une règle de suppression; le dernier jeu réel donne 18 TO pour 525 scénarios intégralement tracés.
+
+La chaîne de dépendances est explicite : TO exhaustive → TO décisionnels → plan de traitement. Une révision amont invalide systématiquement les artefacts aval. Sans golden set métier disponible, les signaux de plausibilité et de canonicalisation restent des aides heuristiques auditables, jamais des règles de suppression. La revue humaine décide des TO retenus et renseigne ensuite mesures, responsable, échéance et état d implémentation.
+
+Les six prompts opérationnels RO/TO sont désormais visibles et versionnables dans l espace SRA. Le croisement TO gère aussi les troncatures Ollama par découpage récursif candidats × RO Types, avec conservation rejouable du cas minimal encore incomplet.
+
+Décision d interface : RAG et SRA sont deux espaces autonomes. Chacun porte ses propres onglets Prompts métier et son accès Expert; le registre de versions est une infrastructure partagée, pas un couplage entre leurs interfaces ou leurs campagnes d évaluation.

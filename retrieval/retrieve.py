@@ -30,6 +30,7 @@ from env_config import (
     HYPE_ENABLED,
 )
 from retrieval.coverage import apply_coverage_floor, elastic_candidate_pool
+from core.evidence_policy import rank_chat_candidates
 
 logger = get_logger("rag.retrieval")
 
@@ -170,7 +171,11 @@ def hybrid_retrieve(
     if _rr is not None and max_ce_score is not None:
         _rr.set("max_ce", round(max_ce_score, 3))
 
-    # 5b) Plancher de couverture par document (mode « Tous » uniquement),
+    # 5b) Autorité des preuves : pertinence × qualité/provenance. La quarantaine
+    # est exclue défensivement même si un ancien index la contenait encore.
+    fused = rank_chat_candidates(fused)
+
+    # 5c) Plancher de couverture par document (mode « Tous » uniquement),
     # puis réduction au top-k final borné.
     if fused:
         _floor_min = CE_RELEVANCE_THRESHOLD if USE_CROSS_ENCODER else None

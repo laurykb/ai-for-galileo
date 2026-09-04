@@ -1,7 +1,6 @@
 "use client";
 
-/** Navigation par espaces métier. Chat, SRA et Documents sont explicites ;
- * les aides et outils techniques du Chat restent contextuels à cet espace. */
+/** Navigation par espaces métier. */
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -21,7 +20,7 @@ const CHAT_LINKS = [
   { href: "/informations", label: "Aide" },
   { href: "/settings", label: "Réglages" },
 ];
-const CHAT_PATHS = ["/rag", "/informations", "/settings", "/agents", "/observability"];
+const CHAT_PATHS = ["/rag", "/agents", "/informations", "/settings", "/observability"];
 
 function NavLink({ href, label, pathname }: { href: string; label: string; pathname: string }) {
   const active = pathname.startsWith(href);
@@ -42,6 +41,7 @@ export function HeaderNav() {
   if (pathname === "/") return null;
 
   const isChatWorkspace = CHAT_PATHS.some((path) => pathname.startsWith(path));
+  const isSraWorkspace = pathname.startsWith("/sra");
   const chatLinks = [...CHAT_LINKS, ...(expert ? EXPERT_LINKS : [])];
 
   return (
@@ -51,15 +51,12 @@ export function HeaderNav() {
       ))}
       {isChatWorkspace && (
         <>
-          <span className="border-l border-edge pl-5 text-xs uppercase tracking-wider text-fg-faint">
-            Outils du chat
-          </span>
           {chatLinks.map((link) => (
             <NavLink key={link.href} {...link} pathname={pathname} />
           ))}
         </>
       )}
-      {isChatWorkspace && <ExpertToggle />}
+      {(isChatWorkspace || isSraWorkspace) && <ExpertToggle />}
     </nav>
   );
 }
